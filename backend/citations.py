@@ -29,7 +29,8 @@ def csl_item(ref: dict) -> dict:
             authors.append({"family": a["family"], "given": a.get("given", "")})
         elif a.get("name"):
             authors.append({"literal": a["name"]})
-    item = {"id": ref["id"], "type": "article-journal", "title": strip_tags(ref.get("title", "")),
+    conference = ref.get("kind") == "conference-paper"
+    item = {"id": ref["id"], "type": "paper-conference" if conference else "article-journal", "title": strip_tags(ref.get("title", "")),
             "author": authors, "container-title": strip_tags(ref.get("journal", "")), "volume": ref.get("volume", ""),
             "issue": ref.get("issue", ""), "page": ref.get("pages", ""), "DOI": ref.get("doi", "")}
     if not ref.get("doi") and ref.get("url"):
@@ -103,7 +104,11 @@ def risk_review(ref: dict, claims_using: int) -> list[dict]:
             flags.append({"level": "medium", "text": f"Missing {field}."})
     if not ref.get("doi"):
         flags.append({"level": "low", "text": "No DOI; readers will rely on the other details to find it."})
-    if not (ref.get("volume") or ref.get("pages")):
+    conference = ref.get("kind") == "conference-paper"
+    if conference:
+        flags.append({"level": "low", "text": "Conference paper: check the proceedings title, the conference date and place, and the page range "
+                      "against the published proceedings. The style may omit \"In\" before the proceedings title; add it by hand if your style needs it."})
+    elif not (ref.get("volume") or ref.get("pages")):
         flags.append({"level": "low", "text": "No volume or page range; APA 7 expects them for journal articles where they exist."})
     t = ref.get("title") or ""
     caps = [w for w in re.findall(r"[A-Za-z]+", t) if len(w) > 3]
@@ -120,8 +125,10 @@ def bibtex(refs: list[dict]) -> str:
         fam = ((r.get("authors") or [{}])[0].get("family") or "anon")
         key = re.sub(r"[^A-Za-z0-9]", "", fam) + str(r.get("year") or "")
         authors = " and ".join(f"{a.get('family', '')}, {a.get('given', '')}".strip(", ") for a in r.get("authors") or [])
-        fields = {"title": r.get("title"), "author": authors, "journal": r.get("journal"), "year": r.get("year"),
-                  "volume": r.get("volume"), "number": r.get("issue"), "pages": r.get("pages"), "doi": r.get("doi")}
+        conference = r.get("kind") == "conference-paper"
+        fields = {"title": r.get("title"), "author": authors, ("booktitle" if conference else "journal"): r.get("journal"),
+                  "year": r.get("year"), "volume": r.get("volume"), "number": r.get("issue"), "pages": r.get("pages"),
+                  "doi": r.get("doi")}
         body = ",\n".join(f"  {k} = {{{str(v).replace('{', '').replace('}', '')}}}" for k, v in fields.items() if v)
-        out.append(f"@article{{{key},\n{body}\n}}")
+        out.append(f"@{'inproceedings' if conference else 'article'}{{{key},\n{body}\n}}")
     return "\n\n".join(out)

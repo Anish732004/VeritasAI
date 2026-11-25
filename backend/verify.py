@@ -142,7 +142,17 @@ def compare_doi(supplied: str, database: str) -> dict:
     return _field("mismatch", s, d, "DOI differs from the record.")
 
 
-def compare_journal(supplied: str, database: str, supplied_issn=None, record_issn=None) -> dict:
+_VENUE_NOISE = {"proceedings", "proceeding", "of", "the", "on", "in", "and", "ieee", "acm", "annual", "international",
+                "conference", "conf", "symposium", "workshop", "meeting", "joint", "th", "st", "nd", "rd"}
+
+
+def venue_core(name: str) -> frozenset:
+    """A conference name without years, ordinals, "Proceedings of the" and publisher words."""
+    words = re.sub(r"\d+(st|nd|rd|th)?", " ", fold(name)).replace("-", " ").split()
+    return frozenset(w.strip("().,:;&") for w in words if w.strip("().,:;&") and w.strip("().,:;&") not in _VENUE_NOISE)
+
+
+def compare_journal(supplied: str, database: str, supplied_issn=None, record_issn=None, conference: bool = False) -> dict:
     if not supplied:
         return _field("missing_supplied", supplied, database, "Your reference has no journal/venue.")
     if not database:
@@ -151,6 +161,11 @@ def compare_journal(supplied: str, database: str, supplied_issn=None, record_iss
         return _field("match", supplied, database, "Same ISSN.")
     sim = similarity(supplied, database)
     a, b = norm_key(supplied), norm_key(database)
+    if conference:
+        # Crossref and OpenAlex name the same conference differently ("2022 IEEE ... (ICCSI)").
+        ca, cb = venue_core(supplied), venue_core(database)
+        if ca and cb and (ca <= cb or cb <= ca) and len(ca & cb) >= 2:
+            return _field("match", supplied, database, "Same conference once years, ordinals and publisher words are ignored.")
     if sim >= 0.9 or a == b:
         return _field("match", supplied, database, f"Venue similarity {sim:.2f}.")
     if a in b or b in a or sim >= 0.6:
@@ -164,7 +179,8 @@ def compare(ref: dict, rec: dict) -> dict:
         "authors": compare_authors(ref.get("authors"), rec.get("authors")),
         "year": compare_year(str(ref.get("year") or ""), rec.get("years") or [], str(rec.get("year") or "")),
         "doi": compare_doi(ref.get("doi", ""), rec.get("doi", "")),
-        "journal": compare_journal(ref.get("journal", ""), rec.get("journal", ""), ref.get("issn"), rec.get("issn")),
+        "journal": compare_journal(ref.get("journal", ""), rec.get("journal", ""), ref.get("issn"), rec.get("issn"),
+                                   conference="conference-paper" in (ref.get("kind"), rec.get("kind"))),
     }
 
 
@@ -256,5 +272,5 @@ def run(ref: dict) -> dict:
             suggestions[extra] = primary[extra]
     return {"status": status, "reason": reason, "fields": fields, "searched": searched,
             "record": {"provider": primary_name, **{k: primary.get(k) for k in
-                       ("title", "authors", "year", "years", "doi", "journal", "issn", "volume", "issue", "pages", "url", "external_id")}},
+                       ("title", "authors", "year", "years", "doi", "journal", "issn", "volume", "issue", "pages", "url", "external_id", "kind")}},
             "suggestions": suggestions}

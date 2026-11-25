@@ -251,7 +251,7 @@ def generate_plan(pid: str):
         plan = None
         if ai.available():
             try:
-                plan, meta = concepts.ai_plan(p["question"])
+                plan, meta = concepts.ai_plan(p["question"], p.get("scope") or "", p.get("level") or "")
             except ai.AIUnavailable as e:
                 plan = concepts.template_plan(p["question"])
                 plan["generated_by"] += f" — AI unavailable: {e}"
@@ -348,6 +348,7 @@ def _ref_from_result(pid: str, r: dict) -> dict:
         "issn": r.get("issn") or [], "volume": r.get("volume", ""), "issue": r.get("issue", ""), "pages": r.get("pages", ""),
         "url": r.get("url", ""), "abstract": r.get("abstract", "")[:20000], "metadata_source": r.get("provider", "OpenAlex"),
         "external_id": r.get("external_id", ""), "retrieved_at": now(),
+        "kind": scholarly.work_kind(r.get("type", ""), r.get("source_type", "")) if r.get("kind") is None else r["kind"],
         "discovery": {"score": r.get("score"), "why": r.get("why"), "concepts": r.get("concepts"),
                       "foundational": bool(r.get("foundational")), "oa_url": r.get("oa_url", ""),
                       "sentence": r.get("sentence")},

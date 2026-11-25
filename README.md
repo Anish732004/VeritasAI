@@ -32,11 +32,21 @@ Open http://127.0.0.1:8000. There is nothing to configure in the browser. On fir
 
 | Setting | What it turns on |
 |---|---|
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | AI-proposed plans, AI reading of counter-evidence abstracts, Red Team questions, an AI synthesis in the summary and the research assistant. With a key, AI stays off until you turn it on in **Settings → AI features**, which first shows what is sent to OpenAI. Without a key, every feature still works using transparent rule-based methods, and the app says so. |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | AI-proposed plans (the model reads your question, scope and level, explains how it understood the question, and suggests concepts, synonyms and filters, all of which are cleaned and then editable), AI reading of counter-evidence abstracts, Red Team questions, an AI synthesis in the summary and the research assistant. With a key, AI stays off until you turn it on in **Settings → AI features**, which first shows what is sent to OpenAI. Without a key, every feature still works using transparent rule-based methods, and the app says so. |
 | `CONTACT_EMAIL` | Identifies the app to OpenAlex/Crossref ("polite pool") for faster, more reliable responses. Sent only to those two services. |
 | `OPENALEX_API_KEY` | Only needed if OpenAlex rate-limits you. |
 
 Optional journal list: put `data/journal_list.csv` with the columns `issn,name,list,tier` (tier is `A`, `B` or `C`, for example from ABDC or ABS) to use your own venue tiers instead of the citation-metric fallback.
+
+### Conference papers
+
+Research Studio searches journal articles **and conference papers** by default (untick *Also conference papers* in the plan's filters to turn them off). Conference papers carry a *Conference paper* badge, are cited as conference papers (BibTeX `@inproceedings`) and get a venue tier from, in order:
+
+1. **A ranked list you add.** Put `data/conference_list.csv` with the columns `name,list,tier`, for example `Advances in Neural Information Processing Systems,CORE,A*`. `A*` counts as `A`. Names are matched ignoring years, ordinals and words such as "Proceedings of the", so "2022 IEEE Conf. on X" matches "X". Use a list you trust (for example CORE) and check each entry yourself; none is bundled.
+2. **Otherwise the publisher and the series' record:** A for a high h-index and citedness, B for a solid record or a recognised society publisher (IEEE, ACM, IET, Springer, Elsevier and similar) with an established series, and C for the rest.
+3. **Proceedings series that bundle many unrelated conferences** (such as *E3S Web of Conferences* or *Lecture Notes in...*) are capped at C, because the series name says nothing about an individual conference.
+
+The tier is a screening aid. It cannot tell you whether a conference reviewed full papers or only abstracts, so check that before relying on a conference paper.
 
 ## Tests (run before every demo)
 

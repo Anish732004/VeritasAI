@@ -11,6 +11,7 @@ DATA_DIR = ROOT / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = Path(os.getenv("VERITAS_DB", DATA_DIR / "veritas.db"))
 JOURNAL_LIST_PATH = DATA_DIR / "journal_list.csv"
+CONFERENCE_LIST_PATH = DATA_DIR / "conference_list.csv"
 STATIC_DIR = ROOT / "static"
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()

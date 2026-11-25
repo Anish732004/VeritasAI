@@ -48,7 +48,7 @@ AI_MAY_NOT = [
 DATA_POLICY = [
     ("Where your work is stored", "Only on this computer, in data/veritas.db. There are no accounts, analytics or tracking."),
     ("Sent to OpenAlex and Crossref", "Search terms from your approved plan, and the DOIs and titles being verified. If CONTACT_EMAIL is set, it identifies the app to these two services only."),
-    ("Sent to OpenAI (only when you turn AI on)", "Your research question, claims, source titles and abstracts, and the passages you linked. Never whole PDFs, your name or your email address."),
+    ("Sent to OpenAI (only when you turn AI on)", "Your research question and scope, claims, source titles and abstracts, and the passages you linked. Never whole PDFs, your name or your email address."),
     ("Uploaded PDFs", "Only upload work you are permitted to use (open access, or through your library licence). The PDF file is not kept: only its extracted text, used to locate passages. You can remove it at any time."),
     ("How long it is kept", "Until you delete it. Remove stored text or a source from its side panel, or delete a whole project in Research Studio (its sources, stored text, claims, evidence and assistant answers go with it). The audit trail keeps a short record of past actions so decisions stay accountable; delete data/veritas.db to erase everything."),
     ("Access", "One local user with no login. Keep the server on 127.0.0.1 and do not publish it with a public tunnel: anyone with the link could read or change every project."),
@@ -95,6 +95,9 @@ RISKS = [
      "where": "evidence", "status": "In place", "source": "Added"},
     {"risk": "Bias towards well-cited, English-language journals",
      "response": "Venue tiers are shown with their basis and called a screening aid. Tier C and any-language options are one click away, and a journal list (e.g. ABDC) can replace the citation metric.",
+     "where": "studio", "status": "Partly", "source": "Added"},
+    {"risk": "Conference papers of uneven quality",
+     "response": "Conference papers are labelled, tiered from a ranked list you can add (such as CORE) or else from the publisher and the series' record, and capped at tier C for proceedings series that bundle many conferences. The tier is a screening aid; check how the conference reviewed its papers.",
      "where": "studio", "status": "Partly", "source": "Added"},
     {"risk": "Over-reliance: treating Source-supported as true",
      "response": "Every Source-supported reason states that the underlying study has not been independently validated. The Red Team looks for counter-evidence on each claim.",

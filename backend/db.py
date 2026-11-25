@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS refs (
   folder TEXT DEFAULT '', tags TEXT DEFAULT '[]', notes TEXT DEFAULT '',
   decision TEXT DEFAULT 'Pending', decision_reason TEXT DEFAULT '',
   verification_status TEXT DEFAULT 'Pending review', verification_id TEXT,
-  override_reason TEXT DEFAULT '', demo INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT
+  override_reason TEXT DEFAULT '', demo INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT,
+  kind TEXT DEFAULT 'journal-article'
 );
 
 CREATE TABLE IF NOT EXISTS verification_results (
@@ -120,6 +121,10 @@ def db():
 def init_db() -> None:
     with db() as con:
         con.executescript(SCHEMA)
+        # Small migrations for databases created by earlier versions.
+        have = {r["name"] for r in con.execute("PRAGMA table_info(refs)")}
+        if "kind" not in have:
+            con.execute("ALTER TABLE refs ADD COLUMN kind TEXT DEFAULT 'journal-article'")
 
 
 def row(r: sqlite3.Row | None) -> dict | None:

@@ -108,6 +108,14 @@ def clean_doi(doi: str) -> str:
     return doi.strip().lower()
 
 
+def work_kind(type_: str, source_type: str = "") -> str:
+    """"conference-paper" or "journal-article" (the two kinds VERITAS cites)."""
+    t = (type_ or "").lower()
+    if t in ("conference-paper", "proceedings-article") or (source_type == "conference" and t in ("", "article")):
+        return "conference-paper"
+    return "journal-article"
+
+
 def from_openalex(w: dict) -> dict:
     loc = w.get("primary_location") or {}
     src = loc.get("source") or {}
@@ -134,6 +142,7 @@ def from_openalex(w: dict) -> dict:
         "url": w.get("doi") or loc.get("landing_page_url") or w.get("id") or "",
         "abstract": reconstruct_abstract(w.get("abstract_inverted_index")),
         "type": w.get("type") or "",
+        "kind": work_kind(w.get("type") or "", src.get("type") or ""),
         "language": w.get("language") or "",
         "is_retracted": bool(w.get("is_retracted")),
         "cited_by_count": w.get("cited_by_count") or 0,
@@ -176,6 +185,7 @@ def from_crossref(m: dict) -> dict:
         "url": m.get("URL", ""),
         "abstract": strip_tags(m.get("abstract") or ""),
         "type": m.get("type", ""),
+        "kind": work_kind(m.get("type", "")),
     }
 
 

@@ -41,7 +41,7 @@ export function badge(status, label = '', title = '') {
 
 export function tierBadge(venue) {
   if (!venue) return '';
-  return `<span class="badge tier-${esc(venue.tier)}" title="${esc(venue.basis)}. A screening aid based on journal metrics, not a judgement of this paper.">Venue tier ${esc(venue.tier)}</span>`;
+  return `<span class="badge tier-${esc(venue.tier)}" title="${esc(venue.basis)}. A screening aid based on venue metrics, not a judgement of this paper.">Venue tier ${esc(venue.tier)}</span>`;
 }
 
 export function decisionBadge(d) { return badge(d || 'Pending'); }

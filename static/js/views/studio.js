@@ -31,6 +31,9 @@ function planEditor(p) {
   const opt = (v, cur, label = v) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
   return `
     <p class="small">${badge(plan.generated_by?.startsWith('AI') ? 'AI interpretation' : 'Pending')} ${esc(plan.generated_by || '')}. Edit anything, then approve. Nothing is searched until you approve.</p>
+    ${plan.ai_note ? `<div class="notice"><b>How the question was understood:</b> ${esc(plan.ai_note)} <span class="muted">If this is not what you mean, edit the question and regenerate.</span></div>` : ''}
+    ${!plan.generated_by?.startsWith('AI') && state.status?.ai_key && !state.status?.ai ? `<div class="notice warn">This plan used simple word rules. An OpenAI key is set, but AI is off. <button class="link" data-action="go" data-page="settings">Turn AI on in Settings</button> for a plan that understands the question, then Regenerate.</div>` : ''}
+    ${!plan.generated_by?.startsWith('AI') && !state.status?.ai_key ? `<p class="small muted">This plan used simple word rules, which can miss the meaning of unusual topics. Add an OpenAI key (see Settings) for better concept maps, or edit the concepts below.</p>` : ''}
     <h4 style="margin:16px 0 8px">Concept map → search terms</h4>
     <p class="small">Every <b>required</b> concept must appear in a paper's title or abstract. Optional concepts only raise the ranking.</p>
     <div id="groups" style="margin-top:10px">${plan.concept_groups.map(groupRow).join('')}</div>
@@ -38,12 +41,13 @@ function planEditor(p) {
     <h4 style="margin:16px 0 8px">Filters</h4>
     <div class="row">
       <div class="field"><label for="f_years">Published in the last</label><select id="f_years" data-f="years">${[2, 3, 5, 10, 20].map(y => opt(y, f.years ?? 5, `${y} years`)).join('')}</select></div>
-      <div class="field"><label for="f_tier">Minimum venue tier</label><select id="f_tier" data-f="min_tier">${opt('A', f.min_tier, 'A (high-impact journals)')}${opt('B', f.min_tier ?? 'B', 'B (established journals)')}${opt('C', f.min_tier, 'C (any journal)')}</select></div>
+      <div class="field"><label for="f_tier">Minimum venue tier</label><select id="f_tier" data-f="min_tier">${opt('A', f.min_tier, 'A (top venues)')}${opt('B', f.min_tier ?? 'B', 'B (established venues)')}${opt('C', f.min_tier, 'C (any venue)')}</select></div>
       <div class="field"><label for="f_lang">Language</label><select id="f_lang" data-f="language">${opt('en', f.language ?? 'en', 'English')}${opt('', f.language, 'Any')}</select></div>
-      <label class="check" style="margin-top:18px"><input type="checkbox" data-f="article_only" ${f.article_only !== false ? 'checked' : ''}> Journal articles only</label>
+      <label class="check" style="margin-top:18px"><input type="checkbox" data-f="article_only" ${f.article_only !== false ? 'checked' : ''}> Journal articles</label>
+      <label class="check" style="margin-top:18px" title="Adds papers presented at conferences. Their venue tier comes from a ranked list you add, or else from the publisher and the conference series' record."><input type="checkbox" data-f="include_conferences" ${f.include_conferences !== false ? 'checked' : ''}> Also conference papers</label>
       <label class="check" style="margin-top:18px"><input type="checkbox" data-f="include_foundational" ${f.include_foundational ? 'checked' : ''}> Add up to 5 highly cited older works</label>
     </div>
-    <p class="small muted" style="margin-top:6px">Venue tiers come from journal citation metrics, which favour large, older, English-language journals. Choose tier C or any language if relevant work is being filtered out, or add your own journal list (see README). <button class="link small" data-action="go" data-page="governance">Why this matters</button></p>
+    <p class="small muted" style="margin-top:6px">Venue tiers come from citation metrics, which favour large, older, English-language venues. Conference papers are tiered from a ranked list you add (such as CORE), or else from the publisher and the conference series' record. Choose tier C or any language if relevant work is being filtered out (see README). <button class="link small" data-action="go" data-page="governance">Why this matters</button></p>
     <details><summary>Themes, sub-questions and inclusion criteria</summary>
       <div class="stack" style="margin-top:8px">${listEditor('themes', 'Themes', plan.themes)}${listEditor('subquestions', 'Sub-questions', plan.subquestions)}${listEditor('inclusion_criteria', 'Inclusion criteria', plan.inclusion_criteria)}</div>
     </details>
@@ -57,7 +61,7 @@ function planApproved(p) {
   return `<div class="notice good">✓ Plan approved ${fmtDate(p.plan_approved_at)}. Reopen it to change the search.</div>
     <div class="stack">${plan.concept_groups.map(g => `<div><b>${esc(g.label)}</b> ${g.required ? badge('Accepted', 'Required') : '<span class="badge">Optional</span>'}
       <div class="row" style="margin-top:4px">${g.terms.map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div></div>`).join('')}</div>
-    <p class="small" style="margin-top:10px">Last ${esc(f.years)} years · venue tier ${esc(f.min_tier)} or higher · ${f.language ? 'English' : 'any language'} · ${f.article_only !== false ? 'journal articles only' : 'all work types'}${f.include_foundational ? ' · plus foundational works' : ''}</p>
+    <p class="small" style="margin-top:10px">Last ${esc(f.years)} years · venue tier ${esc(f.min_tier)} or higher · ${f.language ? 'English' : 'any language'} · ${f.article_only !== false ? (f.include_conferences !== false ? 'journal articles and conference papers' : 'journal articles only') : 'all work types'}${f.include_foundational ? ' · plus foundational works' : ''}</p>
     ${plan.subquestions?.length ? `<details><summary>Sub-questions and inclusion criteria</summary><ul>${plan.subquestions.map(s => `<li>${esc(s)}</li>`).join('')}</ul><ul>${(plan.inclusion_criteria || []).map(s => `<li>${esc(s)}</li>`).join('')}</ul></details>` : ''}
     <div class="row" style="margin-top:12px"><button class="ghost" data-action="plan-reopen">Reopen plan</button></div>`;
 }
@@ -69,7 +73,7 @@ function resultCard(r, i) {
     <div style="min-width:0">
       <h3>${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>` : esc(r.title)}</h3>
       <p class="meta">${esc(authorsText(r.authors, 3))} · ${esc(r.year)} · <i>${esc(r.journal || 'Unknown venue')}</i></p>
-      <div class="row" style="margin-top:6px">${tierBadge(r.venue)}${r.foundational ? '<span class="badge info">Foundational (older, highly cited)</span>' : ''}${r.abstract ? '' : '<span class="badge warn">No abstract</span>'}<span class="mono">${esc(r.doi || 'No DOI')}</span></div>
+      <div class="row" style="margin-top:6px">${r.kind === 'conference-paper' ? '<span class="badge info" title="Presented at a conference. Check how the conference reviewed papers (full papers or abstracts only)."><span aria-hidden="true">◈</span>Conference paper</span>' : ''}${tierBadge(r.venue)}${r.foundational ? '<span class="badge info">Foundational (older, highly cited)</span>' : ''}${r.abstract ? '' : '<span class="badge warn">No abstract</span>'}<span class="mono">${esc(r.doi || 'No DOI')}</span></div>
       <p class="why" style="margin-top:8px">Why it matched: ${esc(r.why)}</p>
       ${r.abstract ? `<details><summary>Abstract</summary><p class="small">${esc(r.abstract)}</p></details>` : ''}
     </div>
@@ -88,7 +92,7 @@ function resultsBlock() {
   const removed = Object.entries(r.removed).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(' · ');
   return `${r.too_few ? `<div class="notice warn">${esc(r.too_few)}</div>` : ''}${r.relaxed ? `<div class="notice">${esc(r.relaxed)}</div>` : ''}
     ${d.results.map(resultCard).join('') || empty('No paper passed every filter. Widen the time window, lower the venue tier or make a concept optional.')}
-    <p class="reportline muted"><b>${r.retrieved}</b> retrieved · <b>${r.shown}</b> shown${removed ? ' · removed: ' + esc(removed) : ''} · ${esc(r.window)} · tier ${esc(r.min_tier)}+</p>
+    <p class="reportline muted"><b>${r.retrieved}</b> retrieved · <b>${r.shown}</b> shown${r.conference_papers ? ` (${r.conference_papers} conference)` : ''}${removed ? ' · removed: ' + esc(removed) : ''} · ${esc(r.window)} · tier ${esc(r.min_tier)}+</p>
     <details><summary>Search details</summary><div class="stack small" style="margin-top:6px">${r.queries.map(q => `<div class="querybox">${esc(q.query)}<br><span style="color:#8fa6d8">${q.count.toLocaleString()} matches in OpenAlex before filtering by concept and venue</span></div>`).join('')}
       <p class="mono">Filters: ${esc(r.filters.join(', '))}</p>${r.venue_warning ? `<p>${esc(r.venue_warning)}</p>` : ''}<p>${esc(r.note)}</p></div></details>`;
 }

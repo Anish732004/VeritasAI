@@ -42,12 +42,23 @@ SYNONYMS = {
     "climate change": ("Climate change", ["climate change", "global warming"]),
     "social media": ("Social media", ["social media", "Instagram", "TikTok", "Facebook"]),
     "mental health": ("Mental health", ["mental health", "depression", "anxiety", "well-being"]),
+    "energy": ("Energy", ["energy", "electricity", "power system"]),
+    "energy sector": ("Energy", ["energy sector", "power sector", "electricity sector", "energy industry", "energy"]),
+    "electricity": ("Electricity", ["electricity", "power system", "electric power"]),
+    "electricity generation": ("Electricity generation", ["electricity generation", "power generation", "electric power generation", "power plant"]),
+    "power generation": ("Electricity generation", ["power generation", "electricity generation", "electric power generation", "power plant"]),
+    "renewable energy": ("Renewable energy", ["renewable energy", "solar", "wind power", "photovoltaic", "clean energy"]),
+    "smart grid": ("Smart grid", ["smart grid", "power grid", "grid management", "demand response"]),
+    "load forecasting": ("Load forecasting", ["load forecasting", "demand forecasting", "electricity demand prediction"]),
+    "predictive maintenance": ("Predictive maintenance", ["predictive maintenance", "fault detection", "condition monitoring"]),
+    "supply chain": ("Supply chain", ["supply chain", "logistics", "supply network"]),
     "remote work": ("Remote work", ["remote work", "telework", "work from home", "hybrid work"]),
 }
 
 # Phrases that describe a setting/population; they become optional groups when the
 # question already has two required topic groups.
-SETTING_WORDS = {"bank", "banks", "banking", "ecommerce", "e-commerce", "retail", "online shopping", "healthcare",
+SETTING_WORDS = {"manufacturing", "agriculture",
+                 "transport", "transportation", "construction", "bank", "banks", "banking", "ecommerce", "e-commerce", "retail", "online shopping", "healthcare",
                  "hospital", "hospitals", "higher education", "university", "universities", "school", "schools",
                  "students", "smes", "sme", "firms", "companies", "organisations", "organizations", "india", "uk",
                  "china", "europe", "united states", "usa", "developing countries"}
@@ -56,6 +67,14 @@ RISK_WORDS = {"risk", "risks", "limitation", "limitations", "challenge", "challe
               "drawback", "drawbacks", "downside", "downsides", "concern", "concerns", "harm", "harms"}
 RISK_GROUP = {"label": "Risks & limitations", "required": False,
               "terms": ["risk", "limitation", "privacy concern", "trust", "challenge", "negative effect"]}
+
+# "-ly" words are adverbs ("specifically", "particularly") and never topics; these are real topics.
+LY_TOPICS = {"family", "supply", "assembly", "anomaly", "monopoly", "italy", "early", "apply", "reply", "ally", "rely", "butterfly"}
+
+
+def is_adverb(word: str) -> bool:
+    return len(word) > 5 and word.endswith("ly") and word not in LY_TOPICS
+
 
 AI_PREFIXES = ("ai-powered", "ai-driven", "ai-based", "ai-enabled", "ai-generated", "ml-based")
 CONNECTORS = re.compile(r"\b(and|or|in|on|of|for|to|with|by|among|between|within|versus|vs)\b|[,;:?!.()\"]")
@@ -103,7 +122,7 @@ def _phrases(question: str) -> tuple[list[str], bool]:
                     phrases.append(" ".join(current))
                 current = []
                 continue
-            if w in STOPWORDS or w in RESEARCH_FILLER or len(w) < 2:
+            if w in STOPWORDS or w in RESEARCH_FILLER or len(w) < 2 or is_adverb(w):
                 if current:
                     phrases.append(" ".join(current))
                 current = []
@@ -181,7 +200,8 @@ def rule_based_groups(question: str) -> list[dict]:
 
 
 def default_filters() -> dict:
-    return {"years": 5, "language": "en", "min_tier": "B", "article_only": True, "include_foundational": False}
+    return {"years": 5, "language": "en", "min_tier": "B", "article_only": True, "include_conferences": True,
+            "include_foundational": False}
 
 
 def template_plan(question: str) -> dict:
@@ -203,27 +223,118 @@ def template_plan(question: str) -> dict:
     }
 
 
-def ai_plan(question: str) -> tuple[dict, dict]:
-    task = ("Create a literature-search plan. Return an object with keys: themes (3-5 strings), subquestions "
-            "(3-5 strings), inclusion_criteria (3-5 strings), concept_groups (2-5 objects with label, required "
-            "boolean, terms: 3-7 short search phrases including British/American spellings). Mark at most 3 groups "
-            "required; settings, populations and risk/limitation themes are optional. No citations.")
-    data, meta = ai.complete_json(task, "Research question: " + question, max_tokens=900)
+AI_PLAN_TASK = (
+    "You are an expert research librarian helping a university student plan a literature search. Read the research "
+    "question and work out (1) the core constructs being studied, (2) the setting, population or application area, and "
+    "(3) any risk, limitation or comparison angle. Then return a JSON object with these keys: "
+    "note (ONE plain sentence restating what the student is asking, so they can check you understood), "
+    "themes (3-5 strings), subquestions (3-5 strings), inclusion_criteria (3-5 strings), "
+    "concept_groups (2-5 objects: label, required boolean, terms) and "
+    "years (one of 2, 3, 5, 10, 20: how far back relevant work is likely to be) and suggested_filters (object with include_conferences boolean). "
+    "Rules for concept_groups: each group is ONE idea and its terms are alternatives (OR) that a relevant paper's title "
+    "or abstract would actually contain: synonyms, acronyms and their spelled-out forms, narrower technical terms used in "
+    "that field, British and American spellings. 3-8 short phrases per group. Never use question words, filler such as "
+    "impact, role, sector, study or specifically, or whole sentences as terms. Prefer the field's own technical vocabulary "
+    "over everyday words. Mark required true only for groups that every relevant paper must mention, at most 3. A "
+    "setting or application area is required only when the question has fewer than two other topic groups. Risk and "
+    "limitation themes are optional. "
+    "include_conferences should be true for computing, engineering and applied-science topics where peer-reviewed "
+    "conference papers are a main publication venue, and false for most medicine, social science and management topics. "
+    "Do not invent citations or authors."
+)
+
+
+# Single words that say nothing about a topic when used alone as a search term.
+GENERIC_TERMS = {"system", "systems", "data", "model", "models", "method", "methods", "technology", "technologies",
+                 "analysis", "approach", "approaches", "application", "applications", "use", "new", "good", "thing", "things"}
+ALLOWED_YEARS = (2, 3, 5, 10, 20)  # the choices offered in the Research Studio filter
+
+
+def _is_filler(text: str) -> bool:
+    words = [w for w in fold(text).replace("-", " ").split() if w]
+    return not words or all(w in STOPWORDS or w in RESEARCH_FILLER or is_adverb(w) for w in words)
+
+
+def _clean_term(term) -> str:
+    t = re.sub(r"\b(?:OR|AND|NOT)\b", " ", str(term))      # boolean operators are added by the search, not by terms
+    t = re.sub(r"[()\[\]{}\"]", " ", t)                      # brackets and quotes
+    t = re.sub(r"\s+", " ", t).strip(" '`,;:.")
+    if len(t) < 2 or len(t) > 60 or _is_filler(t) or t.lower() in GENERIC_TERMS:
+        return ""
+    return t
+
+
+def sanitise_groups(raw) -> list[dict]:
+    """Make a model's concept groups safe to search with. Pure function (see tests).
+
+    Junk terms (operators, brackets, generic words, duplicates) are removed, groups with no usable
+    term disappear, at most 3 groups stay required, and at least one is. Only the boolean True
+    counts as required, so a vague "yes" cannot widen the constraints.
+    """
+    if not isinstance(raw, list):
+        return []
     groups = []
-    for g in (data.get("concept_groups") or [])[:6]:
-        terms = [str(t).strip() for t in g.get("terms") or [] if str(t).strip()][:8]
-        if terms:
-            groups.append({"label": str(g.get("label") or terms[0])[:60], "required": bool(g.get("required")), "terms": terms})
+    for g in raw:
+        if not isinstance(g, dict):
+            continue
+        terms: list[str] = []
+        for t in g.get("terms") if isinstance(g.get("terms"), list) else []:
+            t = _clean_term(t)
+            if t and t.lower() not in (x.lower() for x in terms):
+                terms.append(t)
+        if not terms:
+            continue
+        label = re.sub(r"\s+", " ", str(g.get("label") or "")).strip()[:60]
+        groups.append({"label": label if label and not _is_filler(label) else terms[0],
+                       "required": g.get("required") is True, "terms": terms[:8]})
+    groups = groups[:6]
+    seen = 0
+    for g in groups:
+        if g["required"]:
+            seen += 1
+            g["required"] = seen <= 3
+    if groups and not any(g["required"] for g in groups):
+        groups[0]["required"] = True
+    return groups
+
+
+def validate_ai_plan(data) -> dict:
+    """Turn the model's JSON into a safe plan. Pure function, so it can be tested without a network.
+
+    The model is only trusted for wording; filter suggestions are limited to the choices the
+    Research Studio offers, and anything else keeps the defaults.
+    """
+    if not isinstance(data, dict):
+        raise ai.AIUnavailable("AI plan was not an object")
+    groups = sanitise_groups(data.get("concept_groups"))
     if not groups:
-        raise ai.AIUnavailable("AI plan had no concept groups")
-    plan = {
-        "generated_by": f"AI proposal ({meta['model']}) — edit before approving",
-        "themes": [str(x) for x in data.get("themes") or []][:6],
-        "subquestions": [str(x) for x in data.get("subquestions") or []][:6],
-        "inclusion_criteria": [str(x) for x in data.get("inclusion_criteria") or []][:6],
-        "concept_groups": groups,
-        "filters": default_filters(),
-    }
+        raise ai.AIUnavailable("AI plan had no usable concept groups")
+    filters = default_filters()
+    sug = data.get("suggested_filters") if isinstance(data.get("suggested_filters"), dict) else {}
+    years = data.get("years", sug.get("years"))
+    if isinstance(years, int) and not isinstance(years, bool) and years in ALLOWED_YEARS:
+        filters["years"] = years
+    if isinstance(sug.get("include_conferences"), bool):
+        filters["include_conferences"] = sug["include_conferences"]
+
+    def lines(key):
+        v = data.get(key)
+        return [str(x).strip() for x in v if str(x).strip()][:6] if isinstance(v, list) else []
+
+    note = str(data.get("note") or data.get("interpretation") or "").strip()[:400]
+    return {"ai_note": note, "themes": lines("themes"), "subquestions": lines("subquestions"),
+            "inclusion_criteria": lines("inclusion_criteria"), "concept_groups": groups, "filters": filters}
+
+
+def ai_plan(question: str, scope: str = "", level: str = "") -> tuple[dict, dict]:
+    context = "Research question: " + question
+    if scope.strip():
+        context += "\nScope given by the student: " + scope.strip()
+    if level.strip():
+        context += "\nAcademic level: " + level.strip()
+    data, meta = ai.complete_json(AI_PLAN_TASK, context, max_tokens=1400)
+    plan = validate_ai_plan(data)
+    plan["generated_by"] = f"AI proposal ({meta['model']}): edit before approving"
     return plan, meta
 
 

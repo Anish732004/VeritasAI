@@ -16,7 +16,7 @@ export async function render() {
     + `</div>`
     + panel('AI features', `
       <p>${s.ai ? `<b>On</b> (${esc(s.model)}).` : s.ai_key ? '<b>Off.</b> An OpenAI key is set, but nothing is sent until you turn AI on.' : '<b>Off.</b> No <code>OPENAI_API_KEY</code> in <code>.env</code>; every feature uses rule-based methods.'}</p>
-      <div class="notice"><b>When AI is on, this is sent to OpenAI:</b> your research question, claims, source titles and abstracts, and the passages you linked.
+      <div class="notice"><b>When AI is on, this is sent to OpenAI:</b> your research question and scope, claims, source titles and abstracts, and the passages you linked.
         <b>Never sent:</b> whole PDFs, your name, your email address. Every AI call is recorded in the Audit Trail with the model and prompt version, and every AI output is labelled.</div>
       <div class="row" style="margin-top:8px">${s.ai ? '<button class="ghost" data-action="ai-toggle" data-on="0">Turn AI off</button>'
         : s.ai_key ? '<button data-action="ai-toggle" data-on="1">Turn AI on</button>' : ''}

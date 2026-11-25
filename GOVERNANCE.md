@@ -1,6 +1,6 @@
 # VERITAS AI: Ethics, Governance and Guardrails
 
-This document states how VERITAS AI handles the risks of AI-assisted research. The same content is shown in the app under **Trust & Governance**, and both come from `backend/governance.py`, so the policy you read is the policy the code follows. A test (`tests/test_governance.py`) fails if a risk listed in the code is missing here.
+This document states how VERITAS AI handles the risks of AI-assisted research. The same content is shown in the app under **Trust & Governance**, and both come from `backend/governance.py`, so the policy you read is the policy the code follows. A test (`tests/test_governance.py`) fails if a risk listed in the code is missing here. Rebuild it with `.venv/bin/python scripts/make_governance_md.py`.
 
 Where your institution's academic-integrity or AI-use policy differs from anything below, the institution's policy wins.
 
@@ -13,7 +13,7 @@ Where your institution's academic-integrity or AI-use policy differs from anythi
 
 ## 2. Ethical risks and our response to each
 
-Risks 1 to 9 come from the blueprint (its problem statement and section 11). Risks 10 to 16 are ones the blueprint does not list. *In place* means code enforces the response; *Partly* means the risk is reduced and the remaining limit is stated.
+Risks 1 to 9 come from the blueprint (its problem statement and section 11). Risks 10 to 17 are ones the blueprint does not list. *In place* means code enforces the response; *Partly* means the risk is reduced and the remaining limit is stated.
 
 | # | Risk | Response | Status | Where in the app |
 |---|---|---|---|---|
@@ -30,9 +30,10 @@ Risks 1 to 9 come from the blueprint (its problem statement and section 11). Ris
 | 11 | Hiding AI involvement in submitted work | An AI-use disclosure is built from the audit trail of what actually happened in the project, and included in every exported reference list. | In place | Citation Studio |
 | 12 | The tool writes the student's work for them | VERITAS checks and organises evidence; it does not write essays. The AI synthesis only restates claims the student wrote and linked, and is labelled. | In place | Evidence Graph |
 | 13 | Bias towards well-cited, English-language journals | Venue tiers are shown with their basis and called a screening aid. Tier C and any-language options are one click away, and a journal list (e.g. ABDC) can replace the citation metric. | Partly | Research Studio |
-| 14 | Over-reliance: treating Source-supported as true | Every Source-supported reason states that the underlying study has not been independently validated. The Red Team looks for counter-evidence on each claim. | In place | Contradiction Radar |
-| 15 | Instructions hidden in source text (prompt injection) | Abstracts and PDF text are passed to the model as untrusted data, and its output cannot change a status, a reference or a decision. | In place | Audit Trail |
-| 16 | Synthetic demo data mistaken for evidence | Demo sources are labelled everywhere, excluded from metrics, and can never be verified or cited. | In place | Overview |
+| 14 | Conference papers of uneven quality | Conference papers are labelled, tiered from a ranked list you can add (such as CORE) or else from the publisher and the series' record, and capped at tier C for proceedings series that bundle many conferences. The tier is a screening aid; check how the conference reviewed its papers. | Partly | Research Studio |
+| 15 | Over-reliance: treating Source-supported as true | Every Source-supported reason states that the underlying study has not been independently validated. The Red Team looks for counter-evidence on each claim. | In place | Contradiction Radar |
+| 16 | Instructions hidden in source text (prompt injection) | Abstracts and PDF text are passed to the model as untrusted data, and its output cannot change a status, a reference or a decision. | In place | Audit Trail |
+| 17 | Synthetic demo data mistaken for evidence | Demo sources are labelled everywhere, excluded from metrics, and can never be verified or cited. | In place | Overview |
 
 ## 3. Accountability
 
@@ -86,13 +87,13 @@ The language model is optional. Without `OPENAI_API_KEY`, every feature uses tra
 | Citation Risk Review | Flags missing DOIs, metadata overrides, abstract-only evidence and similar issues on each reference. | Citation Studio |
 | Full audit trail | Every decision, agent run and AI call, with model and prompt version. | Audit Trail |
 
-The offline test suite (`tests/test_logic.py`, `tests/test_governance.py`) covers these rules, including a real DOI with a wrong title, an online-first publication year, PDF hyphenation and invented passages. Run it before every demo.
+The offline test suite covers these rules, including a real DOI with a wrong title, an online-first publication year, PDF hyphenation and invented passages. Run it before every demo.
 
 ## 6. Data and privacy
 
 - **Where your work is stored.** Only on this computer, in data/veritas.db. There are no accounts, analytics or tracking.
 - **Sent to OpenAlex and Crossref.** Search terms from your approved plan, and the DOIs and titles being verified. If CONTACT_EMAIL is set, it identifies the app to these two services only.
-- **Sent to OpenAI (only when you turn AI on).** Your research question, claims, source titles and abstracts, and the passages you linked. Never whole PDFs, your name or your email address.
+- **Sent to OpenAI (only when you turn AI on).** Your research question and scope, claims, source titles and abstracts, and the passages you linked. Never whole PDFs, your name or your email address.
 - **Uploaded PDFs.** Only upload work you are permitted to use (open access, or through your library licence). The PDF file is not kept: only its extracted text, used to locate passages. You can remove it at any time.
 - **How long it is kept.** Until you delete it. Remove stored text or a source from its side panel, or delete a whole project in Research Studio (its sources, stored text, claims, evidence and assistant answers go with it). The audit trail keeps a short record of past actions so decisions stay accountable; delete data/veritas.db to erase everything.
 - **Access.** One local user with no login. Keep the server on 127.0.0.1 and do not publish it with a public tunnel: anyone with the link could read or change every project.
