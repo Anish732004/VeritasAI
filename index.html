@@ -1,1 +1,35 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VERITAS AI — Research intelligence</title><link rel="stylesheet" href="style.css"></head><body><aside><a class="brand" href="#Overview"><span class="logo">V</span><span>VERITAS <b>AI</b><small>RESEARCH INTELLIGENCE</small></span></a><div class="workspace">WORKSPACE <span>⌘</span></div><nav id="nav"></nav><div class="sidefoot"><i></i> Local workspace <small>Evidence first. Always.</small></div></aside><main><header><button class="mobile" onclick="document.body.classList.toggle('open')">☰</button><div class="crumb">Workspace <span>/</span> <b id="crumb">Overview</b></div><div class="topright"><input id="global" placeholder="⌕  Search workspace" aria-label="Search workspace"><button class="ghost" onclick="go('Research Audit Trail')" title="Notifications">♧</button><span class="avatar">R</span><button onclick="newProject()">＋ New research</button></div></header><section id="app"></section><footer>VERITAS AI <span>Every claim deserves evidence. Every source deserves verification.</span></footer></main><dialog id="modal"><div id="modalContent"></div><button class="ghost" onclick="modal.close()">Close</button></dialog><div id="toast" role="status"></div><script src="app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VERITAS AI — Research integrity workspace</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <a class="skip" href="#app">Skip to content</a>
+  <aside id="sidebar" aria-label="Main navigation">
+    <a class="brand" href="#overview"><span class="logo" aria-hidden="true">V</span><span>VERITAS <b>AI</b><small>RESEARCH INTEGRITY</small></span></a>
+    <nav id="nav"></nav>
+    <div class="sidefoot" id="services"></div>
+  </aside>
+  <main>
+    <header>
+      <button class="mobile" data-action="toggle-nav" aria-label="Open menu">☰</button>
+      <div class="crumb">Workspace <span>/</span> <b id="crumb">Overview</b></div>
+      <div class="topright">
+        <label for="projectPicker" class="small">Project</label>
+        <select id="projectPicker" aria-label="Active project"></select>
+        <button data-action="new-project">＋ New research</button>
+      </div>
+    </header>
+    <div id="banner" role="status"></div>
+    <section id="app" tabindex="-1" aria-live="polite"></section>
+    <footer><span>VERITAS AI · Every claim deserves evidence. Every source deserves verification.</span><span>AI assists; you decide. Follow your institution's academic integrity policy.</span></footer>
+  </main>
+  <aside id="drawer" aria-label="Source details" aria-hidden="true"></aside>
+  <dialog id="modal" aria-labelledby="modalTitle"><div id="modalContent"></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
