@@ -49,24 +49,61 @@ def rule_checks(claim: dict, evidence: list[dict], refs: dict[str, dict]) -> lis
     return alerts
 
 
+# Direction of an effect. A cue-word list cannot tell whether a sentence agrees with a claim; comparing the
+# direction the claim asserts with the direction the sentence reports can, for simple findings.
+UP_WORDS = re.compile(r"\b(increas\w*|improv\w*|enhanc\w*|boost\w*|rais\w*|higher|greater|strengthen\w*|promot\w*|positiv\w*|"
+                      r"benefi\w*|gain\w*|facilitat\w*|outperform\w*|more)\b", re.I)
+DOWN_WORDS = re.compile(r"\b(decreas\w*|reduc\w*|lower\w*|declin\w*|diminish\w*|weaken\w*|hinder\w*|undermin\w*|negativ\w*|"
+                        r"harm\w*|damag\w*|impair\w*|worsen\w*|erod\w*|less)\b", re.I)
+NEGATION = re.compile(r"\b(no significant|not significant\w*|insignificant|non-?significant|did not|does not|do not|failed to|fails to|"
+                      r"no evidence|no effect|no impact|no relationship|cannot|could not|not found|without any)\b", re.I)
+DIRECTION_STEMS = re.compile(UP_WORDS.pattern + "|" + DOWN_WORDS.pattern, re.I)
+
+
+def direction(text: str) -> int:
+    """+1 if the text mostly describes an increase or improvement, -1 a decrease or harm, 0 if unclear or mixed."""
+    up, down = len(UP_WORDS.findall(text)), len(DOWN_WORDS.findall(text))
+    return 1 if up > down else -1 if down > up else 0
+
+
+def topic_overlap(sentence: str, claim: str) -> float:
+    """Share of the claim's topic words (direction words removed) that the sentence also uses."""
+    topic = set(tokens(DIRECTION_STEMS.sub(" ", claim)))
+    return len(topic & set(tokens(sentence))) / len(topic) if topic else 0.0
+
+
 def best_sentence(abstract: str, claim_tokens: set[str]) -> str:
+    """The abstract sentence that talks most about the claim's topic and states a finding (not stance-biased)."""
     best, best_score = "", -1.0
     for s in split_sentences(abstract):
         st = set(tokens(s["text"]))
         overlap = len(st & claim_tokens) / (len(claim_tokens) or 1)
-        cue = 0.5 if STRONG_CUES.search(s["text"]) else 0.3 if QUALIFY_CUES.search(s["text"]) else 0
-        score = overlap + cue
+        states_finding = bool(UP_WORDS.search(s["text"]) or DOWN_WORDS.search(s["text"]) or NEGATION.search(s["text"]))
+        score = overlap + (0.15 if states_finding else 0)
         if score > best_score:
             best, best_score = s["text"], score
     return best
 
 
-def rule_stance(sentence: str) -> str:
-    if STRONG_CUES.search(sentence):
-        return "challenges"
-    if QUALIFY_CUES.search(sentence):
-        return "qualifies"
-    return "unclear"
+def rule_stance(sentence: str, claim: str = "") -> str:
+    """supports / qualifies / challenges / unclear, by comparing the sentence with the claim.
+
+    A first guess from wording, not an understanding of the paper: it only calls a stance when the sentence is
+    about the claim's topic, and says "unclear" otherwise. Without a claim it falls back to cue words alone.
+    """
+    negated, hedged = bool(NEGATION.search(sentence)), bool(QUALIFY_CUES.search(sentence))
+    if not claim:
+        return "challenges" if negated else "qualifies" if hedged else "unclear"
+    if topic_overlap(sentence, claim) < 0.25:
+        return "unclear"
+    claimed, found = direction(claim), direction(sentence)
+    if negated and (found == 0 or found == claimed):
+        return "challenges"            # the effect the claim asserts was not found
+    if claimed and found:
+        if found != claimed:
+            return "challenges"        # the finding points the other way
+        return "qualifies" if hedged else "supports"
+    return "qualifies" if hedged else "unclear"
 
 
 def search_counter_evidence(claim: dict, exclude_dois: set[str]) -> dict:
@@ -87,9 +124,10 @@ def search_counter_evidence(claim: dict, exclude_dois: set[str]) -> dict:
         sentence = best_sentence(w["abstract"], claim_tokens)
         if not sentence:
             continue
-        w.update({"sentence": sentence, "stance": rule_stance(sentence), "stance_method": "rule-based cue words"})
+        w.update({"sentence": sentence, "stance": rule_stance(sentence, claim["text"]),
+                  "stance_method": "rule-based: compares the direction of the finding with your claim (a rough guess; read the sentence)"})
         results.append(w)
-    results.sort(key=lambda w: {"challenges": 0, "qualifies": 1, "unclear": 2}[w["stance"]])
+    results.sort(key=lambda w: {"challenges": 0, "qualifies": 1, "supports": 2, "unclear": 3}[w["stance"]])
     results = results[:8]
     ai_meta = None
     if ai.available() and results:

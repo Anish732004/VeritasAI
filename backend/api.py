@@ -9,7 +9,9 @@ import httpx
 from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints
 
 from . import ai, citations, concepts, db, evidence, governance, redteam, scholarly, search, verify, workflow
 from .config import APP_VERSION, CONTACT_EMAIL, OPENAI_MODEL, OPENALEX_API_KEY, PROMPT_VERSION, ROOT, STATIC_DIR
@@ -115,6 +117,11 @@ def status():
             "name": name, "agents": list(workflow.AGENTS.values())}
 
 
+def _text(min_length: int, max_length: int):
+    """A string that is stripped before its length is checked, so "   " counts as empty."""
+    return Annotated[str, StringConstraints(strip_whitespace=True, min_length=min_length, max_length=max_length)]
+
+
 class SettingsIn(BaseModel):
     name: str = Field(default="Researcher", max_length=80)
 
@@ -141,6 +148,15 @@ def set_ai(body: AIToggleIn):
               details="Student acknowledged what is sent to OpenAI." if body.enabled else "")
     ai.ENABLED = body.enabled
     return {"ok": True, "ai": ai.available()}
+
+
+@api.post("/settings/ai/test")
+def test_ai():
+    """Check the key and model with a one-word request (no project data is sent)."""
+    try:
+        return ai.ping()
+    except ai.AIUnavailable as e:
+        raise HTTPException(400, str(e))
 
 
 @api.get("/governance")
@@ -184,8 +200,8 @@ def overview():
 # ------------------------------------------------------------------ projects & plan
 
 class ProjectIn(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    question: str = Field(min_length=5, max_length=2000)
+    title: _text(1, 200)
+    question: _text(5, 2000)
     scope: str = Field(default="", max_length=2000)
     level: str = Field(default="", max_length=80)
 
@@ -215,8 +231,8 @@ def get_project(pid: str):
 
 
 class ProjectPatch(BaseModel):
-    title: str | None = Field(default=None, max_length=200)
-    question: str | None = Field(default=None, max_length=2000)
+    title: _text(1, 200) | None = None
+    question: _text(5, 2000) | None = None
     scope: str | None = Field(default=None, max_length=2000)
     level: str | None = Field(default=None, max_length=80)
 
@@ -258,6 +274,7 @@ def generate_plan(pid: str):
         if plan is None:
             plan = concepts.template_plan(p["question"])
         run["summary"] = f"{len(plan['concept_groups'])} concept groups"
+    plan["for_question"] = p["question"]  # a plan answers one question; approving it after the question changed is blocked
     with db.db() as con:
         db.update(con, "projects", pid, {"plan": plan, "plan_approved_at": None})
         audit(con, "Plan proposed", actor="Discovery Agent", project_id=pid, object_type="project", object_id=pid,
@@ -296,6 +313,10 @@ def approve_plan(pid: str):
         p = load_project(con, pid)
         if not (p.get("plan") or {}).get("concept_groups"):
             raise HTTPException(400, "Generate or write a plan first.")
+        planned_for = (p["plan"].get("for_question") or "").strip()
+        if planned_for and planned_for != p["question"].strip():
+            raise HTTPException(409, "The research question changed after this plan was made. Click Regenerate to plan for the "
+                                     "new question (or change the question back), then approve.")
         db.update(con, "projects", pid, {"plan_approved_at": now()})
         db.decision(con, "plan", pid, "Approved")
         audit(con, "Plan approved", project_id=pid, object_type="project", object_id=pid,
@@ -330,9 +351,18 @@ def run_search(pid: str):
         except ValueError as e:
             raise HTTPException(400, str(e))
         run["summary"] = f"{out['report']['retrieved']} retrieved, {out['report']['shown']} shown"
+    ai_meta = None
+    if ai.available() and out["results"]:
+        try:
+            checked = search.ai_relevance(p["question"], p["plan"], out["results"])
+            ai_meta = checked.pop("meta", None)
+            out["report"]["ai_relevance"] = checked
+        except ai.AIUnavailable as e:
+            out["report"]["ai_relevance_error"] = str(e)
     with db.db() as con:
         audit(con, "Literature search", actor="Discovery Agent", project_id=pid, object_type="project", object_id=pid,
-              details=f"{out['report']['retrieved']} retrieved · {out['report']['shown']} shown · removed {out['report']['removed']}")
+              details=f"{out['report']['retrieved']} retrieved · {out['report']['shown']} shown · removed {out['report']['removed']}"
+                      + (f" · AI rated {out['report']['ai_relevance']['rated']}" if ai_meta else ""), ai=ai_meta)
     return out
 
 
@@ -349,7 +379,7 @@ def _ref_from_result(pid: str, r: dict) -> dict:
         "url": r.get("url", ""), "abstract": r.get("abstract", "")[:20000], "metadata_source": r.get("provider", "OpenAlex"),
         "external_id": r.get("external_id", ""), "retrieved_at": now(),
         "kind": scholarly.work_kind(r.get("type", ""), r.get("source_type", "")) if r.get("kind") is None else r["kind"],
-        "discovery": {"score": r.get("score"), "why": r.get("why"), "concepts": r.get("concepts"),
+        "discovery": {"score": r.get("score"), "why": r.get("why"), "concepts": r.get("concepts"), "ai_relevance": r.get("ai_relevance"),
                       "foundational": bool(r.get("foundational")), "oa_url": r.get("oa_url", ""),
                       "sentence": r.get("sentence")},
         "venue": r.get("venue"), "created_at": now(), "updated_at": now(),
@@ -410,7 +440,7 @@ def save_result(pid: str, body: SaveResultIn):
 
 class ManualRefIn(BaseModel):
     project_id: str
-    title: str = Field(min_length=1, max_length=500)
+    title: _text(1, 500)
     authors: str = Field(default="", max_length=3000)
     year: str = Field(default="", max_length=10)
     doi: str = Field(default="", max_length=200)
@@ -433,6 +463,11 @@ def parse_authors(text: str) -> list[dict]:
 def add_manual_reference(body: ManualRefIn):
     with db.db() as con:
         load_project(con, body.project_id)
+        doi, title = scholarly.clean_doi(body.doi), body.title.strip()
+        dup = con.execute("SELECT title FROM refs WHERE project_id = ? AND ((? != '' AND doi = ?) OR lower(title) = lower(?))",
+                          (body.project_id, doi, doi, title)).fetchone()
+        if dup:
+            raise HTTPException(409, f"Already in this project: “{dup['title'][:100]}”. Open it from the project's sources instead of adding it again.")
         rid = db.new_id()
         data = {"id": rid, "project_id": body.project_id, "title": body.title.strip(), "authors": parse_authors(body.authors),
                 "year": body.year.strip(), "doi": scholarly.clean_doi(body.doi), "journal": body.journal.strip(),
@@ -678,7 +713,7 @@ async def upload_pdf(rid: str, file: UploadFile = File(...)):
 
 
 class TextIn(BaseModel):
-    text: str = Field(min_length=50, max_length=600000)
+    text: _text(50, 600000)
 
 
 @api.post("/references/{rid}/fulltext/text")
@@ -720,7 +755,7 @@ def fetch_open_access(rid: str):
 # ------------------------------------------------------------------ claims & evidence
 
 class ClaimIn(BaseModel):
-    text: str = Field(min_length=5, max_length=2000)
+    text: _text(5, 2000)
     claim_type: str = "source_finding"
 
 
@@ -740,7 +775,7 @@ def create_claim(pid: str, body: ClaimIn):
 
 
 class ClaimPatch(BaseModel):
-    text: str | None = Field(default=None, max_length=2000)
+    text: _text(5, 2000) | None = None
     claim_type: str | None = None
 
 
@@ -789,6 +824,14 @@ def decide_claim(cid: str, body: DecisionIn):
         return claim_bundle(con, db.get(con, "claims", cid))
 
 
+def check_link(claim: dict, ref: dict) -> None:
+    """A claim may only cite sources from its own project, and demo data only links to demo data."""
+    if bool(ref.get("demo")) != bool(claim.get("demo")):
+        raise HTTPException(400, "Demo sources are synthetic and can only be linked to demo claims, never to real ones.")
+    if ref["project_id"] != claim["project_id"]:
+        raise HTTPException(400, "That source belongs to a different project. Save it in this project first, then link it.")
+
+
 @api.get("/claims/{cid}/suggest")
 def suggest_passages(cid: str, reference_id: str):
     with db.db() as con:
@@ -796,6 +839,7 @@ def suggest_passages(cid: str, reference_id: str):
         r = db.get(con, "refs", reference_id)
         if not c or not r:
             _404()
+        check_link(c, r)
     with workflow.agent_run(c["project_id"], "evidence", {"claim_id": cid, "reference_id": reference_id}) as run:
         sugg = evidence.suggest(c["text"], r)
         run["summary"] = f"{len(sugg)} candidate passages"
@@ -808,7 +852,7 @@ def suggest_passages(cid: str, reference_id: str):
 
 class EvidenceIn(BaseModel):
     reference_id: str
-    passage: str = Field(min_length=10, max_length=5000)
+    passage: _text(10, 5000)
     stance: str = "supports"
     origin: str = "student"
 
@@ -822,6 +866,7 @@ def add_evidence(cid: str, body: EvidenceIn):
         r = db.get(con, "refs", body.reference_id)
         if not c or not r:
             _404()
+        check_link(c, r)
         loc = evidence.locate(body.passage, r)
         eid = db.new_id()
         db.insert(con, "evidence_records", {
@@ -900,7 +945,7 @@ def challenge_claim(cid: str):
 
 class CounterIn(BaseModel):
     result: dict
-    sentence: str = Field(min_length=10, max_length=3000)
+    sentence: _text(10, 3000)
     stance: str
 
 
@@ -1004,7 +1049,7 @@ def build_summary(pid: str):
 
 
 class AskIn(BaseModel):
-    question: str = Field(min_length=3, max_length=2000)
+    question: _text(3, 2000)
 
 
 @api.post("/projects/{pid}/ask")
@@ -1052,8 +1097,11 @@ def get_bibliography(pid: str, style: str = "APA 7"):
     eligible = [r for r in b["references"] if workflow.citable(r)]
     with db.db() as con:
         full = {r["id"]: db.get(con, "refs", r["id"]) for r in eligible}
+    # The same work saved more than once is listed once (one entry, one BibTeX key).
+    kept, dropped = citations.dedupe(list(full.values()))
+    full = {r["id"]: r for r in kept}
     try:
-        entries = citations.bibliography(list(full.values()), style)
+        entries = citations.bibliography(kept, style)
     except ValueError as e:
         raise HTTPException(400, str(e))
     for e in entries:
@@ -1063,6 +1111,9 @@ def get_bibliography(pid: str, style: str = "APA 7"):
                  "awaiting your accept/reject decision" if r["decision"] == "Pending" else
                  f"metadata {r['verification_status']} and not reviewed"}
                 for r in b["references"] if not workflow.citable(r)]
+    excluded += [{"id": r["id"], "title": r["title"],
+                  "why": f"duplicate of another saved copy of “{keep['title'][:70]}” ({'same DOI' if r.get('doi') else 'same title'}); listed once"}
+                 for r, keep in dropped]
     return {"style": style, "entries": entries, "excluded": excluded, "blockers": b["export_blockers"],
             "styles": list(citations.STYLES)}
 
@@ -1145,8 +1196,97 @@ def backup():
               "audit_events", "agent_runs", "chat", "settings"]
     with db.db() as con:
         dump = {t: db.rows(con.execute(f"SELECT * FROM {t}")) for t in tables}
-    dump["exported_at"] = now()
+    dump["format"], dump["version"], dump["exported_at"] = "veritas-backup", APP_VERSION, now()
     return JSONResponse(dump, headers={"Content-Disposition": 'attachment; filename="veritas-backup.json"'})
+
+
+MAX_RESTORE_BYTES = 200 * 1024 * 1024
+
+
+def is_backup(dump) -> bool:
+    """A file made by Settings -> Download backup (the old browser-only export has "sources", not "refs")."""
+    return (isinstance(dump, dict) and isinstance(dump.get("projects"), list) and isinstance(dump.get("refs"), list)
+            and isinstance(dump.get("claims"), list))
+
+
+def restore_backup(con, dump: dict) -> dict:
+    """Merge a backup into this workspace, keeping the original ids so every link between records survives.
+
+    Projects already here are left untouched (restoring twice changes nothing), demo projects are not
+    restored, and only known columns are read from the file. AI consent is never restored: whether AI is on
+    is decided on this computer in Settings.
+    """
+    def cols(table: str) -> set[str]:
+        return {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
+
+    def put(table: str, row) -> bool:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]:
+            return False
+        data = {k: v for k, v in row.items() if k in cols(table)}
+        if con.execute(f"SELECT 1 FROM {table} WHERE id = ?", (row["id"],)).fetchone():
+            return False
+        for k, v in data.items():
+            if k not in db.JSON_COLUMNS and isinstance(v, (dict, list)):
+                data[k] = json.dumps(v)
+        db.insert(con, table, data)
+        return True
+
+    have = {r[0] for r in con.execute("SELECT id FROM projects")}
+    rows = lambda key: [r for r in dump.get(key) or [] if isinstance(r, dict)]
+    skipped = {"already here": 0, "demo": 0, "invalid": 0}
+    pids = set()
+    for p in rows("projects"):
+        if p.get("demo"):
+            skipped["demo"] += 1
+        elif p.get("id") in have:
+            skipped["already here"] += 1
+        elif not str(p.get("title") or "").strip() or not str(p.get("question") or "").strip():
+            skipped["invalid"] += 1
+        elif put("projects", p):
+            pids.add(p["id"])
+    counts = {"projects": len(pids), "references": 0, "claims": 0, "evidence": 0}
+    rids, cids = set(), set()
+    for r in rows("refs"):
+        if r.get("project_id") in pids and not r.get("demo") and put("refs", r):
+            rids.add(r["id"]); counts["references"] += 1
+    for c in rows("claims"):
+        if c.get("project_id") in pids and not c.get("demo") and put("claims", c):
+            cids.add(c["id"]); counts["claims"] += 1
+    for v in rows("verification_results"):
+        if v.get("reference_id") in rids:
+            put("verification_results", v)
+    for e in rows("evidence_records"):
+        if e.get("claim_id") in cids and e.get("reference_id") in rids and put("evidence_records", e):
+            counts["evidence"] += 1
+    for t in ("chat", "agent_runs", "audit_events"):
+        for r in rows(t):
+            if r.get("project_id") in pids:
+                put(t, r)
+    for d in rows("review_decisions"):
+        if d.get("object_id") in pids | rids | cids:
+            put("review_decisions", d)
+    for st in rows("settings"):  # only each restored project's own disclosure wording
+        key = str(st.get("key") or "")
+        if key.startswith("disclosure:") and key.split(":", 1)[1] in pids and isinstance(st.get("value"), str):
+            con.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, st["value"]))
+    audit(con, "Backup restored", details=f"{counts}; left alone: {skipped}")
+    return {**counts, "skipped": skipped}
+
+
+@api.post("/restore")
+async def restore(request: Request):
+    """Restore a file made by Settings -> Download backup."""
+    raw = await request.body()
+    if len(raw) > MAX_RESTORE_BYTES:
+        raise HTTPException(413, "That file is larger than 200 MB.")
+    try:
+        dump = json.loads(raw)
+    except ValueError:
+        raise HTTPException(400, "That file is not valid JSON.")
+    if not is_backup(dump):
+        raise HTTPException(400, "This is not a VERITAS backup. Use the file from Settings -> Download backup.")
+    with db.db() as con:
+        return restore_backup(con, dump)
 
 
 @api.post("/demo/reset")
@@ -1173,6 +1313,10 @@ async def import_legacy(request: Request):
         old = await request.json()
     except ValueError:
         raise HTTPException(400, "Not a JSON file.")
+    if is_backup(old):  # a current backup, not an old browser-only export: restore it properly
+        with db.db() as con:
+            r = restore_backup(con, old)
+        return {**r, "restored": True}
     if not isinstance(old, dict) or "projects" not in old:
         raise HTTPException(400, "This does not look like an old VERITAS workspace export.")
     imported = {"projects": 0, "references": 0, "claims": 0}

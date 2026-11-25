@@ -17,7 +17,7 @@ function row(r) {
   const v = r.verification;
   const expanded = open.has(r.id);
   return `<article class="card">
-    <div class="row" style="justify-content:space-between;align-items:flex-start">
+    <div class="row cardhead" style="justify-content:space-between;align-items:flex-start">
       <div style="flex:1;min-width:0">
         <h3><button class="link" data-action="open-source" data-id="${esc(r.id)}">${esc(r.title)}</button></h3>
         <p class="meta">${esc(authorsText(r.authors, 3))} · ${esc(r.year || 'n.d.')} · ${esc(r.journal || 'No venue')} · <span class="mono">${esc(r.doi || 'no DOI')}</span></p>
@@ -25,7 +25,7 @@ function row(r) {
         <p class="why-status">${esc(v ? v.reason : r.demo ? 'Synthetic demo source: never verified.' : 'Not checked yet.')}</p>
         ${r.override_reason ? `<p class="small">Your reason: “${esc(r.override_reason)}”</p>` : ''}
       </div>
-      <div class="row end" style="max-width:340px">${v?.fields && Object.keys(v.fields).length ? `<button class="ghost small" data-action="ver-toggle" data-id="${esc(r.id)}" aria-expanded="${expanded}">${expanded ? 'Hide' : 'Compare fields'}</button>` : ''}${resolveButtons(r)}</div>
+      <div class="row end cardactions" style="max-width:340px">${v?.fields && Object.keys(v.fields).length ? `<button class="ghost small" data-action="ver-toggle" data-id="${esc(r.id)}" aria-expanded="${expanded}">${expanded ? 'Hide' : 'Compare fields'}</button>` : ''}${resolveButtons(r)}</div>
     </div>
     ${expanded ? `<div style="margin-top:12px">${compareTable(v)}</div>` : ''}
     <div class="row" style="margin-top:10px">${decisionButtons(r)}</div>
@@ -42,7 +42,7 @@ export async function render() {
     '<button data-action="add-reference">＋ Check a reference</button>')
     + nextAction(b, 'verification')
     + `<div class="notice">A verified record proves the paper exists with these details. It does not prove that any claim you attribute to it is accurate; that is checked separately in the Evidence Graph.</div>
-    <div class="metrics" style="grid-template-columns:repeat(5,1fr)">${STATUSES.map(s => `<div class="metric"><small>${s}</small><strong>${b.references.filter(r => !r.demo && r.verification_status === s).length}</strong>${badge(s)}</div>`).join('')}</div>
+    <div class="metrics five">${STATUSES.map(s => `<div class="metric"><small>${s}</small><strong>${b.references.filter(r => !r.demo && r.verification_status === s).length}</strong>${badge(s)}</div>`).join('')}</div>
     ${panel(`Review queue (${queue.length})`, queue.map(row).join('') || empty('Nothing waiting. Every source is verified, reviewed with a reason, or rejected.'), '',
       'Problem sources first. For each one: re-check, use the database values, keep yours with a reason, or reject the source.')}
     ${panel(`Reviewed (${done.length})`, done.map(row).join('') || empty('No reviewed sources yet.'))}`;

@@ -53,9 +53,9 @@ GOOD = {
 }
 
 
-def test_validation_caps_required_groups_and_limits_filters_to_the_offered_choices():
+def test_validation_keeps_every_required_group_and_limits_filters_to_the_offered_choices():
     plan = concepts.validate_ai_plan(GOOD)
-    assert len(required(plan["concept_groups"])) == 3
+    assert len(required(plan["concept_groups"])) == 4  # the number of required concepts is not capped
     assert plan["filters"]["years"] == 10 and plan["filters"]["include_conferences"] is True
     assert plan["ai_note"].startswith("You want")
     assert concepts.validate_ai_plan({**GOOD, "years": 99})["filters"]["years"] == 5  # not an offered choice
@@ -214,3 +214,46 @@ def test_conference_papers_get_inproceedings_bibtex_and_a_review_flag():
     assert bib.startswith("@inproceedings{Lee2022") and "booktitle = {Conf on X}" in bib and "journal" not in bib
     assert any("Conference paper" in f["text"] for f in citations.risk_review(ref, 1))
     assert citations.bibtex([{**ref, "kind": "journal-article"}]).startswith("@article{")
+
+
+# ------------------------------------------------------------- relaxing many required concepts
+
+def work(i, title, abstract=""):
+    return {"external_id": f"W{i}", "title": title, "abstract": abstract, "year": "2024", "doi": f"10.1/{i}", "kind": "journal-article",
+            "journal": "Energy", "issn": [], "source_id": "S1", "authors": []}
+
+
+def groups4():
+    return [{"label": g, "required": True, "terms": [g.lower()]} for g in ("Alpha", "Beta", "Gamma", "Delta")] + \
+           [{"label": "Optional", "required": False, "terms": ["optional"]}]
+
+
+def test_relaxation_goes_one_concept_at_a_time_and_keeps_relaxed_papers(monkeypatch):
+    """With few matches for all four required concepts, the last ones are relaxed step by step, and papers
+    that miss only a relaxed concept are kept (before the fix they were fetched and then thrown away)."""
+    queries = []
+    full = [work(1, "alpha beta gamma delta study")]
+    step1 = full + [work(2, "alpha beta gamma only")]                                 # lacks Delta
+    step2 = step1 + [work(i, f"alpha beta paper {i}") for i in range(3, 10)]           # lack Gamma and Delta
+
+    def fake_search(query, filters, per_page=50, sort=None):
+        queries.append(query)
+        return {1: (full, 1), 2: (step1, 2), 3: (step2, 9)}[len(queries)]
+    monkeypatch.setattr(scholarly, "openalex_search", fake_search)
+    monkeypatch.setattr(scholarly, "openalex_sources", lambda ids: {"S1": {"summary_stats": {"2yr_mean_citedness": 4, "h_index": 90}}})
+    out = search.discover({"concept_groups": groups4(), "filters": {"min_tier": "C"}}, set(), set())
+    assert len(queries) == 3 and "delta" in queries[0] and "delta" not in queries[1] and "gamma" not in queries[2]
+    titles = [r["title"] for r in out["results"]]
+    assert "alpha beta paper 3" in titles and "alpha beta gamma only" in titles  # kept although they miss relaxed concepts
+    rep = out["report"]
+    assert "Gamma, Delta were made optional" in rep["relaxed"] and out["report"]["removed"]["missing a required concept"] == 0
+    assert titles[0] == "alpha beta gamma delta study"  # fully matching paper still ranks first
+
+
+def test_papers_missing_a_still_required_concept_are_dropped(monkeypatch):
+    plenty = [work(i, f"alpha beta gamma delta {i}") for i in range(10)] + [work(99, "alpha only")]
+    monkeypatch.setattr(scholarly, "openalex_search", lambda *a, **k: (plenty, 11))
+    monkeypatch.setattr(scholarly, "openalex_sources", lambda ids: {"S1": {"summary_stats": {"2yr_mean_citedness": 4, "h_index": 90}}})
+    out = search.discover({"concept_groups": groups4(), "filters": {"min_tier": "C"}}, set(), set())
+    assert out["report"]["relaxed"] is None
+    assert "alpha only" not in [r["title"] for r in out["results"]] and out["report"]["removed"]["missing a required concept"] == 1

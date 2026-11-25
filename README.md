@@ -38,6 +38,18 @@ Open http://127.0.0.1:8000. There is nothing to configure in the browser. On fir
 
 Optional journal list: put `data/journal_list.csv` with the columns `issn,name,list,tier` (tier is `A`, `B` or `C`, for example from ABDC or ABS) to use your own venue tiers instead of the citation-metric fallback.
 
+### Turn on AI (better question understanding)
+
+Without a key, Research Studio builds the concept map from word rules and a synonym list. With a key, a language model reads your question for meaning: it works out which concepts a paper must cover, adds the field's own terms, synonyms and acronyms, decides which concepts are essential (there is no limit on how many are required), explains in one sentence how it understood the question, and suggests a time window and whether conference papers matter. Its answer is cleaned (junk terms and duplicates removed), then **you edit and approve it** before anything is searched. After each search it also **rates how relevant every result is to your question** (from the title and abstract only) and blends the rating into the ranking, so papers that merely share a keyword sink and the best ones rise. Each result shows the rating, a one-sentence reason and, when the model quotes the paper, that quote only if it really appears there. Papers are never removed or accepted for you. If few papers match every required concept, the search relaxes the least essential ones step by step and tells you which.
+
+1. **Get an API key.** Sign in at <https://platform.openai.com/api-keys> and choose *Create new secret key*. Copy it straight away (it is shown once). API use is billed separately from a ChatGPT subscription: add a few dollars of credit under *Billing*. A full demo costs well under $1 with the default model.
+2. **Put it in `.env`.** In the project folder run `cp .env.example .env` (Windows: `Copy-Item .env.example .env`), open `.env` and write `OPENAI_API_KEY=sk-...` on one line, with no quotes or spaces. Never share the key or put it in chat, screenshots or GitHub (`.env` is git-ignored).
+3. **Restart the server.** Press `Ctrl+C` in the terminal, then start it again (see *Run it*). The server reads `.env` only at start-up.
+4. **Settings → Test connection → Turn AI on.** The test sends only the word OK. Turning AI on shows what is shared with OpenAI (your question and scope, claims, source titles and abstracts, linked passages; never whole PDFs, your name or your email) and asks you to confirm. Settings shows these steps with a tick for each one you have done, and explains errors such as a wrong key or no credit.
+5. **Research Studio → Regenerate** in the plan. The plan should say *AI proposal* and show *How the question was understood*. Check it, edit anything, approve.
+
+Every AI call is recorded in the Audit Trail and labelled in the app. Turn AI off in Settings at any time.
+
 ### Conference papers
 
 Research Studio searches journal articles **and conference papers** by default (untick *Also conference papers* in the plan's filters to turn them off). Conference papers carry a *Conference paper* badge, are cited as conference papers (BibTeX `@inproceedings`) and get a venue tier from, in order:
@@ -47,6 +59,14 @@ Research Studio searches journal articles **and conference papers** by default (
 3. **Proceedings series that bundle many unrelated conferences** (such as *E3S Web of Conferences* or *Lecture Notes in...*) are capped at C, because the series name says nothing about an individual conference.
 
 The tier is a screening aid. It cannot tell you whether a conference reviewed full papers or only abstracts, so check that before relying on a conference paper.
+
+## Backup and restore
+
+**Settings → Backups → Download backup** saves every project, source, claim, evidence link, decision and the audit trail as one JSON file. **Settings → Restore from a backup** adds them back (on a new computer, or after a reinstall):
+
+- Projects that already exist are left untouched, so restoring the same file twice is safe. This is a merge, not a replace: to start from scratch, delete `data/veritas.db` first.
+- The sample project is not restored, and whether AI is on is never restored: that is decided on each computer in Settings.
+- Dropping a backup into *Research Library → Import from the old version* also works: it is recognised and restored in full.
 
 ## Tests (run before every demo)
 

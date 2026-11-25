@@ -9,11 +9,12 @@ Stages (each one is reported back to the student):
  5. Score: concept coverage, text relevance, venue tier and recency, with a "why it matched" line.
 """
 import csv
+import json
 from datetime import date
 
-from . import scholarly
+from . import ai, scholarly
 from .config import CONFERENCE_LIST_PATH, JOURNAL_LIST_PATH
-from .text import BM25, phrase_in, tokens
+from .text import BM25, fold, phrase_in, tokens
 from .verify import venue_core
 
 WEIGHTS = {"coverage": 0.40, "text": 0.25, "venue": 0.20, "recency": 0.15}
@@ -204,14 +205,30 @@ def discover(plan: dict, existing_dois: set[str], existing_titles: set[str]) -> 
     query = build_query(groups)
     works, count = scholarly.openalex_search(query, filters, per_page=50)
     report["queries"].append({"query": query, "count": count})
-    required_n = len([g for g in groups if g.get("required")])
-    if len(works) < 8 and required_n > 2:
-        query2 = build_query(groups, drop=1)
-        more, count2 = scholarly.openalex_search(query2, filters, per_page=50)
-        report["queries"].append({"query": query2, "count": count2})
-        report["relaxed"] = "Fewer than 8 results, so the last required concept was relaxed for a second query."
-        seen = {w["external_id"] for w in works}
+    # Many required concepts can leave too few papers. Relax from the end of the list (the plan lists the most
+    # essential concepts first), one concept at a time, until there are enough candidates. A relaxed concept
+    # becomes optional: it still raises the ranking, but a paper is no longer dropped for missing it.
+    required = [g for g in groups if g.get("required")] or groups[:1]
+    relaxed: list[str] = []
+    seen = {w["external_id"] for w in works}
+    for drop in range(1, len(required)):
+        if len(works) >= 8:
+            break
+        query_n = build_query(groups, drop=drop)
+        more, count_n = scholarly.openalex_search(query_n, filters, per_page=50)
+        report["queries"].append({"query": query_n, "count": count_n})
+        relaxed = [g["label"] for g in required[len(required) - drop:]]
         works += [w for w in more if w["external_id"] not in seen]
+        seen |= {w["external_id"] for w in more}
+    if relaxed:
+        report["relaxed"] = (f"Only {len(works)} papers matched all {len(required)} required concepts, so "
+                             + ", ".join(relaxed) + (" was" if len(relaxed) == 1 else " were")
+                             + " made optional: papers are no longer dropped for missing "
+                             + ("it" if len(relaxed) == 1 else "them") + ", but they rank lower.")
+    effective = [{**g, "required": g.get("required") and g["label"] not in relaxed} if g.get("required") else g
+                 for g in groups]
+    if not any(g.get("required") for g in effective):
+        effective = groups
 
     foundational = []
     if f.get("include_foundational"):
@@ -241,7 +258,7 @@ def discover(plan: dict, existing_dois: set[str], existing_titles: set[str]) -> 
     results = []
     for i, w in enumerate(pool):
         tier = venue_tier(w, sources, journal_list, conference_list)
-        hits = concept_hits(w, groups)
+        hits = concept_hits(w, effective)
         key_doi = w.get("doi")
         if (key_doi and key_doi in existing_dois) or w["title"].lower() in existing_titles:
             removed["already in project"] += 1
@@ -275,3 +292,78 @@ def discover(plan: dict, existing_dois: set[str], existing_titles: set[str]) -> 
         report["too_few"] = ("Fewer than 5 papers passed. Consider widening the time window, lowering the "
                              "venue tier or making a concept group optional. Nothing was added to fill the list.")
     return {"results": results, "report": report}
+
+
+# ---------------------------------------------------------------- AI relevance check
+
+RELEVANCE_LABELS = {3: "Directly relevant", 2: "Relevant", 1: "Tangential", 0: "Likely off-topic"}
+RELEVANCE_TASK = (
+    "You are screening literature-search results for a university student. For each paper decide how well it helps "
+    "answer the student's research question, using ONLY the title and abstract given. Levels: 3 = directly addresses "
+    "the question's main concepts in the question's setting; 2 = relevant: covers the key concepts but in a narrower, "
+    "broader or neighbouring setting; 1 = tangential: shares keywords but is mainly about something else; 0 = off-topic "
+    "(for example a word used in a different sense). Be strict: sharing a keyword is not relevance. If there is no "
+    "abstract, judge from the title alone and use at most level 2. For each paper return an object with keys "
+    "i (the number given), level (0-3), reason (one short sentence in your own words saying what the paper is about "
+    "and how it relates to the question) and quote (one sentence copied exactly from the title or abstract that "
+    "supports your level, or an empty string). Return a JSON list with one object per paper. Never invent details."
+)
+MAX_RATED = 30
+
+
+def apply_ai_relevance(results: list[dict], data, model: str = "") -> int:
+    """Attach the model's ratings to the results and re-rank them. Pure function (see tests).
+
+    The model only rates and explains. Papers are never removed: "likely off-topic" ones sink to the bottom
+    of their group and say so. A quote is shown only if it really appears in the title or abstract, and a
+    paper without an abstract can be rated at most "Relevant". Returns how many papers were rated.
+    """
+    rated = 0
+    for d in data if isinstance(data, list) else []:
+        if not isinstance(d, dict):
+            continue
+        try:
+            r = results[int(d.get("i"))]
+            level = int(d.get("level"))
+        except (TypeError, ValueError, IndexError):
+            continue
+        if level not in RELEVANCE_LABELS or isinstance(d.get("level"), bool):
+            continue
+        if not r.get("abstract"):
+            level = min(level, 2)
+        text = fold((r.get("title") or "") + " " + (r.get("abstract") or ""))
+        quote = str(d.get("quote") or "").strip()
+        grounded = bool(quote) and fold(quote)[:80] in text
+        r["ai_relevance"] = {"level": level, "label": RELEVANCE_LABELS[level], "reason": str(d.get("reason") or "").strip()[:300],
+                             "quote": quote[:400] if grounded else "", "model": model}
+        rated += 1
+    for r in results:
+        base = r["score"]["total"]
+        level = (r.get("ai_relevance") or {}).get("level")
+        if level is not None:
+            r["score"]["parts"]["ai"] = round(level / 3, 3)
+            r["score"]["total"] = round(0.5 * base + 0.5 * (level / 3), 3)
+    # Re-rank within each group (recent papers, then foundational ones), keeping the group order.
+    main = sorted([r for r in results if not r.get("foundational")], key=lambda r: r["score"]["total"], reverse=True)
+    old = sorted([r for r in results if r.get("foundational")], key=lambda r: r["score"]["total"], reverse=True)
+    results[:] = main + old
+    return rated
+
+
+def ai_relevance(question: str, plan: dict, results: list[dict]) -> dict:
+    """Ask the model to rate how relevant each result is to the research question (needs AI turned on)."""
+    batch = results[:MAX_RATED]
+    if not batch:
+        return {"rated": 0, "model": None}
+    note = (plan.get("ai_note") or "").strip()
+    required = "; ".join(g["label"] for g in plan.get("concept_groups") or [] if g.get("required"))
+    context = "Research question: " + question + (f"\nHow it was understood: {note}" if note else "") + \
+              (f"\nConcepts papers should cover: {required}" if required else "")
+    papers = [{"i": i, "title": r["title"], "year": r.get("year"), "venue": r.get("journal"),
+               "abstract": (r.get("abstract") or "")[:1000]} for i, r in enumerate(batch)]
+    data, meta = ai.complete_json(RELEVANCE_TASK, context, data=json.dumps(papers), max_tokens=3000,
+                                  inputs=[r.get("external_id", "") for r in batch])
+    rated = apply_ai_relevance(batch, data, meta.get("model", ""))
+    results[:] = sorted([r for r in results if not r.get("foundational")], key=lambda r: r["score"]["total"], reverse=True) + \
+                 sorted([r for r in results if r.get("foundational")], key=lambda r: r["score"]["total"], reverse=True)
+    return {"rated": rated, "model": meta.get("model"), "meta": meta, "off_topic": len([r for r in results if (r.get("ai_relevance") or {}).get("level") == 0])}

@@ -5,9 +5,10 @@ tolerance, and every comparison keeps both values and the reason so the student 
 exactly why a status was given. A failed lookup is never turned into "verified".
 """
 import re
+from difflib import SequenceMatcher
 
 from . import scholarly
-from .text import fold, norm_key, similarity
+from .text import fold, norm_key, parse_person_name, similarity
 
 FIELDS = ("title", "authors", "year", "doi", "journal")
 STATUS_VERIFIED, STATUS_PARTIAL, STATUS_MISMATCH = "Verified match", "Partial match", "Mismatch"
@@ -19,15 +20,8 @@ def _parts(author) -> tuple[str, str]:
     if isinstance(author, dict):
         if author.get("family"):
             return author.get("given") or "", author["family"]
-        name = author.get("name") or ""
-    else:
-        name = str(author)
-    name = name.strip()
-    if "," in name:
-        fam, given = name.split(",", 1)
-        return given.strip(), fam.strip()
-    bits = name.split()
-    return (" ".join(bits[:-1]), bits[-1]) if bits else ("", "")
+        return parse_person_name(author.get("name") or "")
+    return parse_person_name(str(author))
 
 
 def name_profile(author) -> dict:
@@ -60,21 +54,48 @@ def _field(status, supplied, database, note=""):
     return {"status": status, "supplied": supplied, "database": database, "note": note}
 
 
+def _title_tokens(value: str) -> list[str]:
+    """Words of a title, ignoring case, accents, punctuation, hyphenation and markup."""
+    return re.findall(r"[a-z0-9]+", fold(value))
+
+
+def _word_changes(a: list[str], b: list[str]) -> tuple[list[str], float]:
+    """Plain-language list of the words that differ (yours -> database) and the word-level similarity."""
+    sm = SequenceMatcher(None, a, b, autojunk=False)
+    out = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "replace":
+            out.append(f"“{' '.join(a[i1:i2])}” (yours) vs “{' '.join(b[j1:j2])}” (record)")
+        elif tag == "delete":
+            out.append(f"“{' '.join(a[i1:i2])}” only in your title")
+        elif tag == "insert":
+            out.append(f"“{' '.join(b[j1:j2])}” only in the record")
+    return out, sm.ratio()
+
+
 def compare_title(supplied: str, database: str) -> dict:
+    """A title matches only when every word is the same. Case, punctuation, hyphens, accents and markup are
+    ignored, but a changed, added or removed word is never "close enough": it is a Partial match that names
+    the words, or a Mismatch when the titles are mostly different. (A similarity score would let
+    "knowledge sharing" become "knowledge hiding" pass on a long title.)"""
     if not supplied:
         return _field("missing_supplied", supplied, database, "Your reference has no title.")
     if not database:
         return _field("missing_database", supplied, database, "The database record has no title.")
-    sim = similarity(supplied, database)
-    a, b = fold(supplied), fold(database)
-    main_a, main_b = a.split(":")[0].strip(), b.split(":")[0].strip()
-    if sim >= 0.95:
-        return _field("match", supplied, database, f"Title similarity {sim:.2f}.")
-    if similarity(main_a, main_b) >= 0.95 or (len(main_a) > 20 and (main_a in b or main_b in a)):
-        return _field("partial", supplied, database, "Main title matches; subtitle differs or is missing.")
-    if sim >= 0.80:
-        return _field("partial", supplied, database, f"Titles are similar but not the same (similarity {sim:.2f}).")
-    return _field("mismatch", supplied, database, f"Titles differ (similarity {sim:.2f}).")
+    a, b = _title_tokens(supplied), _title_tokens(database)
+    if a == b:
+        return _field("match", supplied, database, "Same words (case, punctuation and markup ignored).")
+    main_a = _title_tokens(fold(supplied).split(":")[0])
+    main_b = _title_tokens(fold(database).split(":")[0])
+    changes, ratio = _word_changes(a, b)
+    detail = "; ".join(changes[:4]) + (f"; and {len(changes) - 4} more" if len(changes) > 4 else "")
+    if len(main_a) >= 3 and main_a == main_b:
+        if ":" not in fold(supplied) or ":" not in fold(database):
+            return _field("partial", supplied, database, "Main title matches; the subtitle is missing on one side.")
+        return _field("partial", supplied, database, f"Main title matches; the subtitle differs: {detail}.")
+    if ratio < 0.6:
+        return _field("mismatch", supplied, database, f"Titles are mostly different: {detail}.")
+    return _field("partial", supplied, database, f"Some words differ: {detail}.")
 
 
 def compare_authors(supplied, database) -> dict:

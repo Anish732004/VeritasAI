@@ -229,15 +229,17 @@ AI_PLAN_TASK = (
     "(3) any risk, limitation or comparison angle. Then return a JSON object with these keys: "
     "note (ONE plain sentence restating what the student is asking, so they can check you understood), "
     "themes (3-5 strings), subquestions (3-5 strings), inclusion_criteria (3-5 strings), "
-    "concept_groups (2-5 objects: label, required boolean, terms) and "
+    "concept_groups (2-6 objects: label, required boolean, terms) and "
     "years (one of 2, 3, 5, 10, 20: how far back relevant work is likely to be) and suggested_filters (object with include_conferences boolean). "
     "Rules for concept_groups: each group is ONE idea and its terms are alternatives (OR) that a relevant paper's title "
     "or abstract would actually contain: synonyms, acronyms and their spelled-out forms, narrower technical terms used in "
     "that field, British and American spellings. 3-8 short phrases per group. Never use question words, filler such as "
     "impact, role, sector, study or specifically, or whole sentences as terms. Prefer the field's own technical vocabulary "
-    "over everyday words. Mark required true only for groups that every relevant paper must mention, at most 3. A "
-    "setting or application area is required only when the question has fewer than two other topic groups. Risk and "
-    "limitation themes are optional. "
+    "over everyday words. Order the groups from most to least essential. Mark required true for every concept "
+    "that a relevant paper must actually be about, however many that is: do not limit the number. Mark a group "
+    "optional when relevant papers might not name it (a broad setting, a population, a risk or limitation angle, a "
+    "comparison) or when it only narrows the topic. Be careful: each required concept narrows the search, so only "
+    "require what the question truly cannot do without. "
     "include_conferences should be true for computing, engineering and applied-science topics where peer-reviewed "
     "conference papers are a main publication venue, and false for most medicine, social science and management topics. "
     "Do not invent citations or authors."
@@ -268,8 +270,9 @@ def sanitise_groups(raw) -> list[dict]:
     """Make a model's concept groups safe to search with. Pure function (see tests).
 
     Junk terms (operators, brackets, generic words, duplicates) are removed, groups with no usable
-    term disappear, at most 3 groups stay required, and at least one is. Only the boolean True
-    counts as required, so a vague "yes" cannot widen the constraints.
+    term disappear, and at least one group stays required. Only the boolean True counts as
+    required, so a vague "yes" cannot add constraints. The number of required groups is not capped:
+    the search relaxes the least essential ones if too few papers match.
     """
     if not isinstance(raw, list):
         return []
@@ -287,12 +290,7 @@ def sanitise_groups(raw) -> list[dict]:
         label = re.sub(r"\s+", " ", str(g.get("label") or "")).strip()[:60]
         groups.append({"label": label if label and not _is_filler(label) else terms[0],
                        "required": g.get("required") is True, "terms": terms[:8]})
-    groups = groups[:6]
-    seen = 0
-    for g in groups:
-        if g["required"]:
-            seen += 1
-            g["required"] = seen <= 3
+    groups = groups[:8]
     if groups and not any(g["required"] for g in groups):
         groups[0]["required"] = True
     return groups

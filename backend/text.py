@@ -167,3 +167,56 @@ class BM25:
             f = tf[t]
             s += self.idf.get(t, 0) * f * (self.k1 + 1) / (f + self.k1 * (1 - self.b + self.b * dl / (self.avgdl or 1)))
         return s
+
+
+# ---------------------------------------------------------------- person names
+
+_HONORIFIC = re.compile(r"^(?:(?:dr|prof|professor|mr|mrs|ms|sir|dato'?|datuk|datin|seri|tan sri|tun|puan|encik|haji|hj|ir|ts)\.?\s+)+", re.I)
+_DEGREES = {"phd", "md", "msc", "mba", "mphil", "dphil", "frs", "cfa", "cpa", "dds", "dvm", "esq", "jr", "sr", "ii", "iii", "iv"}
+_PARTICLES = {"van", "von", "de", "der", "den", "di", "da", "del", "della", "le", "la", "bin", "ibn", "al", "el", "dos", "das", "du", "ter", "ten"}
+
+
+def _is_postnominal(text: str) -> bool:
+    """"D. R. B. D. P. B." (honours), "PhD", "Jr.": things that follow a name but are not a given name."""
+    toks = [t for t in re.split(r"[\s,]+", text.strip()) if t]
+    if not toks:
+        return False
+    initials = 0
+    for t in toks:
+        bare = t.strip(".").lower()
+        if bare in _DEGREES:
+            continue
+        # Initials are single letters ("J.", "D.R.B.") or a short all-capitals run ("DRB"), never a word like "John".
+        if re.fullmatch(r"(?:[A-Za-z]\.)+[A-Za-z]?\.?|[A-Za-z]|[A-Z]{2,6}", t):
+            initials += len(re.findall(r"[A-Za-z]", t))
+            continue
+        return False
+    # One or two initials are a normal given name ("Smith, J. R."); four or more are honours or degrees.
+    return initials >= 4 or all(t.strip(".").lower() in _DEGREES for t in toks)
+
+
+def parse_person_name(name: str) -> tuple[str, str]:
+    """(given, family) from "Given Family", "Family, Given", "Given Family, D. R. B. D." or "Family, Given, Jr."."""
+    name = re.sub(r"\s+", " ", strip_tags(name or "")).strip()
+    name = _HONORIFIC.sub("", name)
+    if "," in name:
+        parts = [p.strip() for p in name.split(",")]
+        left, rest = parts[0], [p for p in parts[1:] if p]
+        if rest and all(_is_postnominal(p) for p in rest):
+            name = left            # "Alyas Ahmed, D. R. B. D. P. B." -> the name is "Alyas Ahmed"
+        elif rest and len(rest) >= 2 and _is_postnominal(rest[-1]):
+            return rest[0], left   # "Smith, John, Jr."
+        elif rest:
+            return ", ".join(rest) if len(rest) > 1 else rest[0], left
+        else:
+            name = left
+    bits = name.split()
+    if not bits:
+        return "", ""
+    if len(bits) == 1:
+        return "", bits[0]
+    i = len(bits) - 1
+    while i > 1 and bits[i - 1].lower() in _PARTICLES:
+        i -= 1
+    return " ".join(bits[:i]), " ".join(bits[i:])
+

@@ -34,6 +34,38 @@ def available() -> bool:
     return configured() and ENABLED
 
 
+HINTS = {
+    "AuthenticationError": "OpenAI rejected the key. Check that OPENAI_API_KEY in .env is the complete key (it starts with sk-), "
+                           "has no spaces or quotes around it, and has not been deleted. Restart the server after editing .env.",
+    "PermissionDeniedError": "OpenAI refused this key for the chosen model. Check the key's permissions and OPENAI_MODEL.",
+    "RateLimitError": "OpenAI says the account is out of credit or going too fast. API use is billed separately from a ChatGPT "
+                      "subscription: add a few dollars of credit at platform.openai.com under Billing, then try again.",
+    "NotFoundError": "OpenAI does not know this model. Check OPENAI_MODEL in .env (the default is gpt-4.1-mini).",
+    "APIConnectionError": "Could not reach OpenAI. Check your internet connection (a university network may block it).",
+    "APITimeoutError": "OpenAI took too long to answer. Try again in a moment.",
+}
+
+
+def explain(e: Exception) -> str:
+    """A plain-language reason for a failed OpenAI request."""
+    name = type(e).__name__
+    return HINTS.get(name) or f"AI request failed ({name})"
+
+
+def ping() -> dict:
+    """Tiny connection test. It sends no project data, so it can run before AI is turned on."""
+    if not configured():
+        raise AIUnavailable("No OPENAI_API_KEY found. Add it to the .env file and restart the server.")
+    from openai import OpenAI
+
+    try:
+        resp = OpenAI(api_key=OPENAI_API_KEY, timeout=30).responses.create(
+            model=OPENAI_MODEL, input="Reply with the single word OK.", max_output_tokens=16)
+    except Exception as e:
+        raise AIUnavailable(explain(e)) from e
+    return {"ok": True, "model": getattr(resp, "model", OPENAI_MODEL), "reply": (resp.output_text or "").strip()[:40]}
+
+
 def complete(task: str, prompt: str, *, data: str = "", max_tokens: int = 1200, inputs: list[str] | None = None) -> tuple[str, dict]:
     if not available():
         raise AIUnavailable("AI features are off (no OPENAI_API_KEY, or not turned on in Settings)")
@@ -49,7 +81,7 @@ def complete(task: str, prompt: str, *, data: str = "", max_tokens: int = 1200, 
         )
         text = resp.output_text or ""
     except Exception as e:  # network, auth, quota
-        raise AIUnavailable(f"AI request failed ({type(e).__name__})") from e
+        raise AIUnavailable(explain(e)) from e
     meta = {"model": getattr(resp, "model", OPENAI_MODEL), "prompt_version": PROMPT_VERSION,
             "task": task[:120], "inputs": inputs or []}
     return text, meta

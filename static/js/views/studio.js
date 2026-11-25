@@ -31,6 +31,7 @@ function planEditor(p) {
   const opt = (v, cur, label = v) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
   return `
     <p class="small">${badge(plan.generated_by?.startsWith('AI') ? 'AI interpretation' : 'Pending')} ${esc(plan.generated_by || '')}. Edit anything, then approve. Nothing is searched until you approve.</p>
+    ${plan.for_question && plan.for_question.trim() !== p.question.trim() ? `<div class="notice warn"><b>The question changed after this plan was made.</b> This plan is for “${esc(plan.for_question)}”. Click <b>Regenerate</b> to plan for the current question; approving is blocked until you do.</div>` : ''}
     ${plan.ai_note ? `<div class="notice"><b>How the question was understood:</b> ${esc(plan.ai_note)} <span class="muted">If this is not what you mean, edit the question and regenerate.</span></div>` : ''}
     ${!plan.generated_by?.startsWith('AI') && state.status?.ai_key && !state.status?.ai ? `<div class="notice warn">This plan used simple word rules. An OpenAI key is set, but AI is off. <button class="link" data-action="go" data-page="settings">Turn AI on in Settings</button> for a plan that understands the question, then Regenerate.</div>` : ''}
     ${!plan.generated_by?.startsWith('AI') && !state.status?.ai_key ? `<p class="small muted">This plan used simple word rules, which can miss the meaning of unusual topics. Add an OpenAI key (see Settings) for better concept maps, or edit the concepts below.</p>` : ''}
@@ -66,6 +67,16 @@ function planApproved(p) {
     <div class="row" style="margin-top:12px"><button class="ghost" data-action="plan-reopen">Reopen plan</button></div>`;
 }
 
+const REL_CLASS = { 3: 'good', 2: 'info', 1: 'warn', 0: 'bad' };
+const REL_ICON = { 3: '●', 2: '◐', 1: '◔', 0: '○' };
+function aiBlock(r) {
+  const a = r.ai_relevance;
+  if (!a) return '';
+  return `<div class="airead"><span class="badge ${REL_CLASS[a.level]}" title="Rated by ${esc(a.model || 'the language model')} from the title and abstract only. A reading to help you decide, not a verdict."><span aria-hidden="true">${REL_ICON[a.level]}</span>AI: ${esc(a.label)}</span>
+    ${a.reason ? `<span class="small"> ${esc(a.reason)}</span>` : ''}
+    ${a.quote ? `<div class="quote small">“${esc(a.quote)}” <span class="muted">(found in the paper)</span></div>` : ''}</div>`;
+}
+
 function resultCard(r, i) {
   const saved = lastSearch.saved[i];
   const pct = Math.round((r.score?.total || 0) * 100);
@@ -75,10 +86,11 @@ function resultCard(r, i) {
       <p class="meta">${esc(authorsText(r.authors, 3))} · ${esc(r.year)} · <i>${esc(r.journal || 'Unknown venue')}</i></p>
       <div class="row" style="margin-top:6px">${r.kind === 'conference-paper' ? '<span class="badge info" title="Presented at a conference. Check how the conference reviewed papers (full papers or abstracts only)."><span aria-hidden="true">◈</span>Conference paper</span>' : ''}${tierBadge(r.venue)}${r.foundational ? '<span class="badge info">Foundational (older, highly cited)</span>' : ''}${r.abstract ? '' : '<span class="badge warn">No abstract</span>'}<span class="mono">${esc(r.doi || 'No DOI')}</span></div>
       <p class="why" style="margin-top:8px">Why it matched: ${esc(r.why)}</p>
+      ${aiBlock(r)}
       ${r.abstract ? `<details><summary>Abstract</summary><p class="small">${esc(r.abstract)}</p></details>` : ''}
     </div>
     <div class="stack" style="justify-items:end;align-content:start">
-      <div class="score" title="Coverage ${r.score.parts.coverage}, text ${r.score.parts.text}, venue ${r.score.parts.venue}, recency ${r.score.parts.recency}">Score <div class="bar"><i style="width:${pct}%"></i></div><b>${pct}</b></div>
+      <div class="score" title="Coverage ${r.score.parts.coverage}, text ${r.score.parts.text}, venue ${r.score.parts.venue}, recency ${r.score.parts.recency}${r.score.parts.ai !== undefined ? `, AI relevance ${r.score.parts.ai} (half of the final score)` : ''}">Score <div class="bar"><i style="width:${pct}%"></i></div><b>${pct}</b></div>
       ${saved ? `<div>${badge(saved.verification_status)}</div><button class="ghost small" data-action="open-source" data-id="${esc(saved.id)}">Open</button>`
         : `<button class="small" data-action="save-result" data-i="${i}">＋ Save &amp; verify</button>`}
     </div>
@@ -90,7 +102,11 @@ function resultsBlock() {
   if (!d || lastSearch.projectId !== state.projectId) return empty('Approve the plan, then search. Results appear here with the reason each one matched.');
   const r = d.report;
   const removed = Object.entries(r.removed).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(' · ');
-  return `${r.too_few ? `<div class="notice warn">${esc(r.too_few)}</div>` : ''}${r.relaxed ? `<div class="notice">${esc(r.relaxed)}</div>` : ''}
+  const air = r.ai_relevance;
+  const aiNote = air ? `<div class="notice">AI relevance check: <b>${air.rated}</b> papers rated against your question${air.off_topic ? `, <b>${air.off_topic}</b> rated likely off-topic and moved to the bottom (nothing was removed)` : ''}. Ratings are the model's reading of each title and abstract: check them against the papers. Half of each paper's score now comes from the rating.</div>`
+    : r.ai_relevance_error ? `<div class="notice warn">The AI relevance check could not run: ${esc(r.ai_relevance_error)} Results are ranked by the standard score.</div>`
+    : state.status?.ai ? '' : `<p class="small muted">Turn on AI in Settings to also rate how relevant each result is to your question.</p>`;
+  return `${aiNote}${r.too_few ? `<div class="notice warn">${esc(r.too_few)}</div>` : ''}${r.relaxed ? `<div class="notice">${esc(r.relaxed)}</div>` : ''}
     ${d.results.map(resultCard).join('') || empty('No paper passed every filter. Widen the time window, lower the venue tier or make a concept optional.')}
     <p class="reportline muted"><b>${r.retrieved}</b> retrieved · <b>${r.shown}</b> shown${r.conference_papers ? ` (${r.conference_papers} conference)` : ''}${removed ? ' · removed: ' + esc(removed) : ''} · ${esc(r.window)} · tier ${esc(r.min_tier)}+</p>
     <details><summary>Search details</summary><div class="stack small" style="margin-top:6px">${r.queries.map(q => `<div class="querybox">${esc(q.query)}<br><span style="color:#8fa6d8">${q.count.toLocaleString()} matches in OpenAlex before filtering by concept and venue</span></div>`).join('')}

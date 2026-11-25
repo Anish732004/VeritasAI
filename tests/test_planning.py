@@ -29,7 +29,7 @@ def test_sanitise_cleans_model_output():
     g = concepts.sanitise_groups(raw)
     assert labels(g) == ["AI methods", "Grid", "Setting", "Fourth"]  # empty group and junk dropped
     assert g[0]["terms"] == ["machine learning", "deep learning DL", "AI ML"]  # quotes, brackets, operators, generic words, duplicates removed
-    assert sum(x["required"] for x in g) == 3  # never more than 3 required groups
+    assert sum(x["required"] for x in g) == 4  # no cap on required groups: the model decides (decision: 2026-11-25)
 
 
 def test_sanitise_keeps_one_required_group():

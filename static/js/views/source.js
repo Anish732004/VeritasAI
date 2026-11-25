@@ -14,11 +14,11 @@ const FIELD_STATUS = {
 export function compareTable(v) {
   if (!v || !v.fields || !Object.keys(v.fields).length) return '';
   const provider = v.record?.provider || 'Database';
-  return `<div class="tablewrap"><table class="compare"><thead><tr><th>Field</th><th>Your reference</th><th>${esc(provider)} record</th><th>Result</th></tr></thead><tbody>
+  return `<div class="tablewrap"><table class="compare stackable"><thead><tr><th>Field</th><th>Your reference</th><th>${esc(provider)} record</th><th>Result</th></tr></thead><tbody>
     ${Object.entries(v.fields).map(([k, f]) => {
       const [st, label] = FIELD_STATUS[f.status] || ['Pending', f.status];
       const cls = f.status === 'mismatch' ? 'mismatch' : f.status === 'partial' ? 'partial' : f.status.startsWith('missing') && f.status !== 'missing_both' ? 'missing' : '';
-      return `<tr class="${cls}"><td>${FIELD_LABEL[k] || esc(k)}</td><td>${esc(f.supplied || '—')}</td><td>${esc(f.database || '—')}</td><td>${badge(st, label)}<div class="small muted" style="margin-top:4px">${esc(f.note)}</div></td></tr>`;
+      return `<tr class="${cls}"><td>${FIELD_LABEL[k] || esc(k)}</td><td data-label="Your reference">${esc(f.supplied || '—')}</td><td data-label="${esc(provider)} record">${esc(f.database || '—')}</td><td data-label="Result">${badge(st, label)}<div class="small muted" style="margin-top:4px">${esc(f.note)}</div></td></tr>`;
     }).join('')}</tbody></table></div>
     <p class="small muted" style="margin-top:6px">Searched: ${esc((v.searched || []).join(', '))} · checked ${fmtDate(v.checked_at)}${v.record?.url ? ` · <a href="${esc(v.record.url)}" target="_blank" rel="noopener">open record</a>` : ''}</p>`;
 }

@@ -12,7 +12,7 @@ import httpx
 
 from . import db
 from .config import CACHE_TTL_SECONDS, CONTACT_EMAIL, HTTP_TIMEOUT, OPENALEX_API_KEY
-from .text import fold, reconstruct_abstract, strip_tags
+from .text import fold, parse_person_name, reconstruct_abstract, strip_tags
 
 OPENALEX = "https://api.openalex.org"
 CROSSREF = "https://api.crossref.org"
@@ -90,14 +90,8 @@ def fetch_json(url: str, params: dict | None = None, *, use_cache: bool = True, 
 # ---------------------------------------------------------------- normalisation
 
 def split_name(name: str) -> dict:
-    name = strip_tags(name).strip()
-    if "," in name:
-        family, given = [p.strip() for p in name.split(",", 1)]
-        return {"given": given, "family": family}
-    parts = name.split()
-    if len(parts) == 1:
-        return {"given": "", "family": parts[0]}
-    return {"given": " ".join(parts[:-1]), "family": parts[-1]}
+    given, family = parse_person_name(name)
+    return {"given": given, "family": family}
 
 
 def clean_doi(doi: str) -> str:

@@ -60,6 +60,7 @@ export const actions = {
     let data;
     try { data = JSON.parse(await file.text()); } catch { throw new Error('That file is not valid JSON.'); }
     const r = await api.post('/import/legacy', data);
+    if (r.restored) { toast(`That was a VERITAS backup, so it was restored in full: ${r.projects} project(s), ${r.references} source(s), ${r.claims} claim(s).`); renderApp(); return; }
     toast(`Imported ${r.projects} project(s), ${r.references} source(s), ${r.claims} claim(s). Re-check sources in the Verification Centre.`);
     renderApp();
   },
