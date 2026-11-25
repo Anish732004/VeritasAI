@@ -21,13 +21,22 @@ class AIUnavailable(Exception):
     pass
 
 
-def available() -> bool:
+# AI stays off, even with a key, until the student turns it on in Settings after reading
+# what data is sent (governance policy). api.create_app() and the settings route set this.
+ENABLED = False
+
+
+def configured() -> bool:
     return bool(OPENAI_API_KEY)
+
+
+def available() -> bool:
+    return configured() and ENABLED
 
 
 def complete(task: str, prompt: str, *, data: str = "", max_tokens: int = 1200, inputs: list[str] | None = None) -> tuple[str, dict]:
     if not available():
-        raise AIUnavailable("No OPENAI_API_KEY configured in .env")
+        raise AIUnavailable("AI features are off (no OPENAI_API_KEY, or not turned on in Settings)")
     from openai import OpenAI
 
     try:

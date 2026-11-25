@@ -63,8 +63,9 @@ export async function openSource(id) {
     ${r.abstract ? `<div class="quote" style="max-height:220px;overflow:auto">${esc(r.abstract)}</div>` : '<p class="small">No abstract stored. Evidence can still be checked against full text you attach.</p>'}
 
     <h4 style="margin:18px 0 8px">Full text</h4>
-    ${r.has_fulltext ? `<p class="small">${badge('Accepted', 'Stored')} ${esc(r.fulltext_origin)}</p><details><summary>Preview</summary><div class="quote" style="max-height:220px;overflow:auto">${esc(r.fulltext_preview)}</div></details>`
+    ${r.has_fulltext ? `<p class="small">${badge('Accepted', 'Stored')} ${esc(r.fulltext_origin)} ${r.demo ? '' : `<button class="link small" data-action="ref-remove-text" data-id="${esc(r.id)}">Remove stored text</button>`}</p><details><summary>Preview</summary><div class="quote" style="max-height:220px;overflow:auto">${esc(r.fulltext_preview)}</div></details>`
       : '<p class="small">Not stored. Attach a PDF or text you are permitted to use so passages can be checked against it.</p>'}
+    ${r.demo ? '' : '<p class="small muted">Only upload work you are allowed to use (open access, or through your library licence). The PDF file is not kept: only its text, stored on this computer and used to find passages. You can remove it at any time.</p>'}
     ${r.demo ? '' : `<div class="row" style="margin-top:8px">
       <label class="ghost small" style="border:1px solid var(--line);border-radius:7px;padding:6px 10px;cursor:pointer;color:var(--ink)">Upload PDF<input type="file" accept="application/pdf" data-change="ref-upload-pdf" data-id="${esc(r.id)}" class="sr-only"></label>
       <button class="ghost small" data-action="ref-fetch-oa" data-id="${esc(r.id)}">Fetch open-access copy</button>
@@ -149,6 +150,12 @@ export const actions = {
     const done = busy(el, 'Downloading…');
     try { await api.post(`/references/${el.dataset.id}/fulltext/open-access`); } finally { done(); }
     toast('Open-access full text stored.');
+    await refreshAfterChange(el.dataset.id);
+  },
+  'ref-remove-text': async el => {
+    if (!await ask({ title: 'Remove stored text?', message: 'The full text is deleted from this computer. Passages that were only found in it will need the abstract or a new upload, and their claims are re-checked.', confirm: 'Remove', danger: true })) return;
+    await api.del(`/references/${el.dataset.id}/fulltext`);
+    toast('Stored text removed. Linked passages were re-checked.');
     await refreshAfterChange(el.dataset.id);
   },
   'ref-paste-toggle': () => { const f = $('pasteForm'); f.hidden = !f.hidden; },

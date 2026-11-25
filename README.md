@@ -32,7 +32,7 @@ Open http://127.0.0.1:8000. There is nothing to configure in the browser. On fir
 
 | Setting | What it turns on |
 |---|---|
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | AI-proposed plans, AI reading of counter-evidence abstracts, Red Team questions, an AI synthesis in the summary and the research assistant. Without a key, every feature still works using transparent rule-based methods, and the app says so. |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | AI-proposed plans, AI reading of counter-evidence abstracts, Red Team questions, an AI synthesis in the summary and the research assistant. With a key, AI stays off until you turn it on in **Settings → AI features**, which first shows what is sent to OpenAI. Without a key, every feature still works using transparent rule-based methods, and the app says so. |
 | `CONTACT_EMAIL` | Identifies the app to OpenAlex/Crossref ("polite pool") for faster, more reliable responses. Sent only to those two services. |
 | `OPENALEX_API_KEY` | Only needed if OpenAlex rate-limits you. |
 
@@ -44,7 +44,7 @@ Optional journal list: put `data/journal_list.csv` with the columns `issn,name,l
 .venv/bin/python -m pytest -q
 ```
 
-These 38 offline tests cover the parts that make judgements: verification tolerances (including the online-first year case and a wrong title on a real DOI), passage matching (PDF hyphenation, near matches, invented passages), claim-status rules, Red Team rules, concept extraction and citation formatting.
+These offline tests cover the parts that make judgements: verification tolerances (including the online-first year case and a wrong title on a real DOI), passage matching (PDF hyphenation, near matches, invented passages), claim-status rules, Red Team rules, concept extraction and citation formatting. `tests/test_governance.py` covers the governance controls: AI consent, removing stored text, the disclosure in exports, and that `GOVERNANCE.md` lists every risk in the code.
 
 The full demo flow against the live APIs (it uses a throwaway database):
 
@@ -59,7 +59,12 @@ VERITAS_LIVE=1 .venv/bin/python -m pytest -q tests/test_api_live.py
 3. **Trace**: Evidence Graph → **Add claim** → choose a source → pick a suggested sentence. The claim becomes *Source-supported*, and the reason is shown.
 4. **Challenge**: Contradiction Radar → **Run Red Team**. Link a qualifying study; the claim becomes *Contradicted / qualified*.
 5. **Approve**: Citation Studio → accept or reject each source and claim. Export stays locked until you do.
-6. **Cite**: export APA 7 (txt, html, BibTeX, CSL-JSON) and show the Audit Trail.
+6. **Cite**: export APA 7 (txt, html, BibTeX, CSL-JSON). The exported file ends with the AI-use disclosure built from the audit trail. Show the Audit Trail.
+7. **Govern**: open **Trust & Governance**: the risk register with a response to each risk, who is accountable for what, the AI-use and data policy, and live counts of what the guardrails caught.
+
+## Ethics, governance and guardrails
+
+See [GOVERNANCE.md](GOVERNANCE.md), also shown in the app under **Trust & Governance**. Both are built from `backend/governance.py`.
 
 ## How it is built
 
@@ -75,6 +80,7 @@ backend/
   evidence.py          Evidence Extraction Agent + claim-status rules
   redteam.py           Research Red Team: rule checks + counter-evidence search
   citations.py         Academic Integrity Agent: CSL bibliography + Citation Risk Review
+  governance.py        risk register, accountability, AI-use and data policy, AI-use disclosure
   ai.py                optional language model (OpenAI), with provenance
   db.py, demo.py       SQLite schema (blueprint data model), sample data
 static/                front end: plain ES modules, one file per screen
@@ -94,7 +100,7 @@ data/veritas.db        your local database (created on first run, not committed)
 
 ## Limits (say these out loud in the demo)
 
-- One local user with no login. Keep the server bound to 127.0.0.1.
+- One local user with no login. Keep the server bound to 127.0.0.1, and don't publish it through a public tunnel: anyone with the link could read or change every project.
 - Discovery searches OpenAlex only. "Not found" means not found in Crossref or OpenAlex; it does not mean the work does not exist.
 - Venue tiers are a screening aid based on journal citation metrics (or your journal list). They are not a verdict on any individual paper.
 - A located passage shows that the source contains those words. It does not prove that the claim follows from them, or that the study is right.

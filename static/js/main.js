@@ -13,6 +13,7 @@ import * as radar from './views/radar.js';
 import * as citations from './views/citations.js';
 import * as audit from './views/audit.js';
 import * as settings from './views/settings.js';
+import * as governance from './views/governance.js';
 import * as source from './views/source.js';
 
 export const PAGES = [
@@ -26,6 +27,7 @@ export const PAGES = [
     lock: b => !b.claims.length && 'Write at least one claim in the Evidence Graph first.' },
   { key: 'citations', label: 'Citation Studio', icon: '❞', view: citations, project: true },
   { key: 'audit', label: 'Audit Trail', icon: '◷', view: audit },
+  { key: 'governance', label: 'Trust & Governance', icon: '⚖', view: governance },
   { key: 'settings', label: 'Settings', icon: '⚙', view: settings },
 ];
 
@@ -78,7 +80,7 @@ function renderNav() {
   const s = state.status;
   $('services').innerHTML = s ? `
     <div><span class="dot on"></span>OpenAlex + Crossref live</div>
-    <div><span class="dot ${s.ai ? 'on' : 'off'}"></span>${s.ai ? `AI on (${esc(s.model)})` : 'AI off: rule-based mode'}</div>
+    <div><span class="dot ${s.ai ? 'on' : 'off'}"></span>${s.ai ? `AI on (${esc(s.model)})` : s.ai_key ? 'AI off until you turn it on' : 'AI off: rule-based mode'}</div>
     <div class="small" style="color:#8192ad;margin-top:6px">Evidence first. Always.</div>` : '';
 }
 
@@ -89,6 +91,9 @@ function renderBanner() {
   if (b?.project?.demo) {
     el.className = 'demo';
     el.innerHTML = `◇ <b>Demo data.</b> This sample project contains synthetic sources that can never be verified or cited. Searches you run here still return live results.`;
+  } else if (state.status?.ai_key && !state.status.ai) {
+    el.className = 'demo';
+    el.innerHTML = `An OpenAI key is set, but AI features stay off until you have read what is sent to OpenAI and turned them on. <button class="link" data-action="go" data-page="settings">Review in Settings →</button>`;
   } else if (state.status && !state.status.ai) {
     el.innerHTML = `Live mode · Search and verification use OpenAlex and Crossref in real time. AI features are off (no OPENAI_API_KEY), so planning, Red Team stance and summaries use transparent rule-based methods.`;
   } else {

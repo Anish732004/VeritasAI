@@ -103,6 +103,7 @@ label { font-size: 12px; font-weight: 700; color: var(--muted); }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .row.end { justify-content: flex-end; }
 .stack { display: grid; gap: 12px; }
+[hidden] { display: none !important; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 .mono { font: 12px ui-monospace, Menlo, monospace; color: #5c6b82; overflow-wrap: anywhere; }
@@ -192,6 +193,8 @@ button.chip[aria-pressed="true"] { background: #dfe7ff; border-color: #9fb3f5; c
 /* ---------- verification ---------- */
 .compare td, .compare th { padding: 9px 10px; font-size: 13px; }
 .compare td:first-child { font-weight: 700; width: 90px; }
+.compare.gov td:first-child { width: 26%; font-weight: 400; }
+.compare.gov td { vertical-align: top; }
 .compare tr.mismatch td { background: #fff6f5; }
 .compare tr.partial td, .compare tr.missing td { background: #fffaf0; }
 table { width: 100%; border-collapse: collapse; text-align: left; }

@@ -1,6 +1,8 @@
 """HTTP API. Every route is thin: it loads records, calls one agent, saves the result,
 and writes an audit event. Network calls never run while a database write is open."""
+import html
 import json
+import textwrap
 from io import BytesIO
 
 import httpx
@@ -9,8 +11,8 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, citations, concepts, db, evidence, redteam, scholarly, search, verify, workflow
-from .config import APP_VERSION, CONTACT_EMAIL, OPENAI_MODEL, OPENALEX_API_KEY, ROOT, STATIC_DIR
+from . import ai, citations, concepts, db, evidence, governance, redteam, scholarly, search, verify, workflow
+from .config import APP_VERSION, CONTACT_EMAIL, OPENAI_MODEL, OPENALEX_API_KEY, PROMPT_VERSION, ROOT, STATIC_DIR
 from .db import audit, now
 from .demo import seed_demo
 from .text import strip_tags
@@ -108,6 +110,7 @@ def status():
         demo = con.execute("SELECT COUNT(*) FROM projects WHERE demo = 1").fetchone()[0]
         name = db.setting(con, "name", "Researcher")
     return {"version": APP_VERSION, "ai": ai.available(), "model": OPENAI_MODEL if ai.available() else None,
+            "ai_key": ai.configured(), "ai_enabled": ai.ENABLED,
             "openalex_key": bool(OPENALEX_API_KEY), "contact_email": bool(CONTACT_EMAIL), "demo_projects": demo,
             "name": name, "agents": list(workflow.AGENTS.values())}
 
@@ -121,6 +124,33 @@ def save_settings(body: SettingsIn):
     with db.db() as con:
         db.set_setting(con, "name", body.name.strip() or "Researcher")
     return {"ok": True}
+
+
+class AIToggleIn(BaseModel):
+    enabled: bool
+
+
+@api.put("/settings/ai")
+def set_ai(body: AIToggleIn):
+    """The student's informed choice to send data to the AI provider (governance policy)."""
+    if body.enabled and not ai.configured():
+        raise HTTPException(400, "Add OPENAI_API_KEY to .env and restart the server first.")
+    with db.db() as con:
+        db.set_setting(con, "ai_enabled", body.enabled)
+        audit(con, "AI features turned " + ("on" if body.enabled else "off"),
+              details="Student acknowledged what is sent to OpenAI." if body.enabled else "")
+    ai.ENABLED = body.enabled
+    return {"ok": True, "ai": ai.available()}
+
+
+@api.get("/governance")
+def get_governance():
+    with db.db() as con:
+        checks = governance.live_checks(con)
+    return {"principles": governance.PRINCIPLES, "accountability": governance.ACCOUNTABILITY,
+            "ai_may": governance.AI_MAY, "ai_may_not": governance.AI_MAY_NOT, "data": governance.DATA_POLICY,
+            "risks": governance.RISKS, "guardrails": governance.GUARDRAILS, "checks": checks,
+            "model_instructions": ai.GUARDRAILS, "prompt_version": PROMPT_VERSION}
 
 
 # ------------------------------------------------------------------ overview
@@ -605,6 +635,22 @@ def _store_fulltext(rid: str, text: str, origin: str) -> dict:
         return ref_public(con, db.get(con, "refs", rid))
 
 
+@api.delete("/references/{rid}/fulltext")
+def remove_fulltext(rid: str):
+    """Data-retention control: forget the stored full text; linked passages are re-checked."""
+    with db.db() as con:
+        r = db.get(con, "refs", rid)
+        if not r:
+            _404("Reference")
+        if not r.get("fulltext"):
+            raise HTTPException(400, "No full text is stored for this source.")
+        db.update(con, "refs", rid, {"fulltext": "", "fulltext_origin": "", "updated_at": now()})
+        relocate_evidence_for_ref(con, rid)
+        audit(con, "Stored full text removed", project_id=r["project_id"], object_type="reference", object_id=rid,
+              details=r["title"][:150])
+        return ref_public(con, db.get(con, "refs", rid))
+
+
 def pdf_to_text(raw: bytes) -> str:
     from pypdf import PdfReader
 
@@ -1020,6 +1066,34 @@ def get_bibliography(pid: str, style: str = "APA 7"):
             "styles": list(citations.STYLES)}
 
 
+def project_disclosure(con, pid: str) -> dict:
+    generated = governance.disclosure(governance.usage(con, pid))
+    saved = db.setting(con, f"disclosure:{pid}", "")
+    return {"generated": generated, "saved": saved, "text": saved or generated}
+
+
+@api.get("/projects/{pid}/disclosure")
+def get_disclosure(pid: str):
+    with db.db() as con:
+        load_project(con, pid)
+        return project_disclosure(con, pid)
+
+
+class DisclosureIn(BaseModel):
+    text: str = Field(default="", max_length=4000)
+
+
+@api.put("/projects/{pid}/disclosure")
+def save_disclosure(pid: str, body: DisclosureIn):
+    """Save the student's own wording; an empty text goes back to the generated version."""
+    with db.db() as con:
+        load_project(con, pid)
+        db.set_setting(con, f"disclosure:{pid}", body.text.strip())
+        audit(con, "AI-use disclosure " + ("edited" if body.text.strip() else "reset to generated"),
+              project_id=pid, object_type="project", object_id=pid)
+        return project_disclosure(con, pid)
+
+
 @api.get("/projects/{pid}/export")
 def export_bibliography(pid: str, style: str = "APA 7", fmt: str = "txt"):
     data = get_bibliography(pid, style)
@@ -1029,6 +1103,7 @@ def export_bibliography(pid: str, style: str = "APA 7", fmt: str = "txt"):
     with db.db() as con:
         p = load_project(con, pid)
         refs = [db.get(con, "refs", e["reference_id"]) for e in entries]
+        note = project_disclosure(con, pid)["text"]
         db.update(con, "projects", pid, {"exported_at": now()})
         audit(con, "Bibliography exported", actor="Academic Integrity Agent", project_id=pid, object_type="project",
               object_id=pid, details=f"{style}, {fmt}, {len(entries)} references")
@@ -1036,13 +1111,15 @@ def export_bibliography(pid: str, style: str = "APA 7", fmt: str = "txt"):
     if fmt == "html":
         body = ("<!doctype html><meta charset='utf-8'><title>References</title><style>body{font-family:Georgia,serif;"
                 "max-width:760px;margin:40px auto;line-height:1.6}p{padding-left:2em;text-indent:-2em}</style><h1>References</h1>"
-                + "".join(f"<p>{e['html']}</p>" for e in entries))
+                + "".join(f"<p>{e['html']}</p>" for e in entries)
+                + f"<h2>AI-use disclosure</h2><div>{html.escape(note)}</div>")
         return Response(body, media_type="text/html", headers={"Content-Disposition": f'attachment; filename="{safe_name}.html"'})
     if fmt == "bib":
-        return PlainTextResponse(citations.bibtex(refs), headers={"Content-Disposition": f'attachment; filename="{safe_name}.bib"'})
+        header = "".join(f"% {line}\n" for line in textwrap.wrap("AI-use disclosure: " + note, 96))
+        return PlainTextResponse(header + "\n" + citations.bibtex(refs), headers={"Content-Disposition": f'attachment; filename="{safe_name}.bib"'})
     if fmt == "csl":
         return JSONResponse([citations.csl_item(r) for r in refs], headers={"Content-Disposition": f'attachment; filename="{safe_name}.json"'})
-    return PlainTextResponse("\n\n".join(e["text"] for e in entries),
+    return PlainTextResponse("References\n\n" + "\n\n".join(e["text"] for e in entries) + "\n\n\nAI-use disclosure\n\n" + note + "\n",
                              headers={"Content-Disposition": f'attachment; filename="{safe_name}.txt"'})
 
 
@@ -1157,6 +1234,7 @@ def create_app() -> FastAPI:
         empty = con.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 0
         if empty and not db.setting(con, "demo_removed", False):
             seed_demo(con)
+        ai.ENABLED = bool(db.setting(con, "ai_enabled", False))
     app = FastAPI(title="VERITAS AI", version=APP_VERSION)
     app.include_router(api)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

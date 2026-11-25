@@ -43,6 +43,7 @@ function planEditor(p) {
       <label class="check" style="margin-top:18px"><input type="checkbox" data-f="article_only" ${f.article_only !== false ? 'checked' : ''}> Journal articles only</label>
       <label class="check" style="margin-top:18px"><input type="checkbox" data-f="include_foundational" ${f.include_foundational ? 'checked' : ''}> Add up to 5 highly cited older works</label>
     </div>
+    <p class="small muted" style="margin-top:6px">Venue tiers come from journal citation metrics, which favour large, older, English-language journals. Choose tier C or any language if relevant work is being filtered out, or add your own journal list (see README). <button class="link small" data-action="go" data-page="governance">Why this matters</button></p>
     <details><summary>Themes, sub-questions and inclusion criteria</summary>
       <div class="stack" style="margin-top:8px">${listEditor('themes', 'Themes', plan.themes)}${listEditor('subquestions', 'Sub-questions', plan.subquestions)}${listEditor('inclusion_criteria', 'Inclusion criteria', plan.inclusion_criteria)}</div>
     </details>
