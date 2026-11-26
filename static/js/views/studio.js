@@ -158,7 +158,7 @@ export async function render() {
   const b = state.bundle, p = b.project;
   const saved = b.references.filter(r => !r.demo);
   const chat = b.chat || [];
-  return projectHeader(b, 'Human-in-the-loop workspace', 'Research Studio', 'Plan first. Discover second. Draw conclusions only after review.')
+  return projectHeader(b, 'Human-in-the-loop workspace', 'Research Studio', 'Plan first. Discover second. Draw conclusions only after review. Already have a reference list? Paste it to check every reference.', '<button class="ghost" data-action="add-reference" title="Paste a reference list (from an AI chatbot, a reading list or your draft) to check every reference">＋ Paste references to check</button>')
     + nextAction(b, 'studio')
     + `<div class="grid studio">
       ${panel('01 · Define the question', `<form data-submit="project-save" class="stack">

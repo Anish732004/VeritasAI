@@ -42,7 +42,7 @@ export async function render() {
   const done = refs.filter(r => !needsAttention(r));
   return projectHeader(b, 'Metadata control centre', 'Verification Centre',
     'Each source is compared field by field with Crossref and OpenAlex. Differences are shown, never corrected silently.',
-    '<button data-action="add-reference">＋ Check a reference</button>')
+    '<button data-action="add-reference">＋ Paste or check references</button>')
     + nextAction(b, 'verification')
     + `<div class="notice">A verified record proves the paper exists with these details. It does not prove that any claim you attribute to it is accurate; that is checked separately in the Evidence Graph.</div>
     <div class="metrics five">${STATUSES.map(s => `<div class="metric"><small>${s}</small><strong>${b.references.filter(r => !r.demo && r.verification_status === s).length}</strong>${badge(s)}</div>`).join('')}</div>

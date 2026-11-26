@@ -159,9 +159,12 @@ def same_work(a: dict, b: dict) -> bool:
     """Two references describe the same work: same DOI, or same title words + year + first author's surname."""
     from .verify import _title_tokens
     da, db_ = clean_doi(a.get("doi") or ""), clean_doi(b.get("doi") or "")
-    if da and db_:
-        return da == db_
     ta, tb = _title_tokens(a.get("title") or ""), _title_tokens(b.get("title") or "")
+    if da and db_:
+        # The same DOI only means the same work if the titles agree; a real DOI pasted with another paper's
+        # title is a wrong-paper reference (Mismatch), not a duplicate.
+        overlap = len(set(ta) & set(tb)) / max(1, len(set(ta) | set(tb)))
+        return da == db_ and overlap >= 0.8
     if not ta or ta != tb:
         return False
     if a.get("year") and b.get("year") and str(a["year"]) != str(b["year"]):

@@ -229,3 +229,10 @@ def test_exports_keep_warnings_and_list_what_was_left_out(client):
     html_ = client.get(f"/api/projects/{pid}/export", params={"fmt": "html"}).text
     assert "RETRACTED" in html_ and "Not included" in html_
     assert "note = {[RETRACTED" in client.get(f"/api/projects/{pid}/export", params={"fmt": "bib"}).text
+
+
+def test_same_doi_with_a_different_title_is_not_a_duplicate():
+    a = {"doi": "10.1/x", "title": "Empirical asset pricing via machine learning", "year": "2020"}
+    assert refparse.same_work(a, {**a, "year": "2018"})                       # same work, one detail differs
+    assert not refparse.same_work(a, {"doi": "10.1/x", "title": "Deep learning for mortgage risk", "year": "2021"})
+

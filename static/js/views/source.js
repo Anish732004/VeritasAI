@@ -28,7 +28,7 @@ export function resolveButtons(r) {
   const sugg = v?.suggestions && Object.keys(v.suggestions).length;
   if (r.demo) return '<span class="small muted">Demo sources cannot be verified.</span>';
   return `<button class="ghost small" data-action="ref-verify" data-id="${esc(r.id)}">↻ Re-check</button>
-    ${sugg && r.verification_status !== 'Verified match' ? `<button class="soft small" data-action="ref-accept-db" data-id="${esc(r.id)}" title="Copy ${esc(Object.keys(v.suggestions).join(', '))} from the record">Use database values</button>` : ''}
+    ${sugg && r.verification_status !== 'Verified match' ? `<button class="soft small" data-action="ref-accept-db" data-id="${esc(r.id)}" title="Replace your ${esc(Object.keys(v.suggestions).join(', '))} with the database record's value, then re-check">✓ Accept fix</button>` : ''}
     ${r.verification_status !== 'Verified match' && r.verification_status !== 'Web source' && !r.override_reason && v ? `<button class="ghost small" data-action="ref-keep-mine" data-id="${esc(r.id)}" data-retracted="${r.verification_status === 'Retracted' ? 1 : ''}">${r.verification_status === 'Retracted' ? 'Cite anyway (give reason)' : 'Keep mine (give reason)'}</button>` : ''}`;
 }
 

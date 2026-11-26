@@ -1,0 +1,9 @@
+A. Gu, S., Kelly, B., & Xiu, D. (2020). Empirical asset pricing via machine learning. The Review of Financial Studies, 33(5), 2223–2273. https://doi.org/10.1093/rfs/hhaa009
+B. Bussmann, N., Giudici, P., Marinelli, D., & Papenbrock, J. (2021). Explainable machine learning in credit risk management. Computational Economics, 57(1), 203–216. https://doi.org/10.1007/s10614-020-10042-0
+C. Sadhwani, A., Giesecke, K., & Sirignano, J. (2021). Deep learning for mortgage risk. Journal of Financial Econometrics, 19(2), 313–368. https://doi.org/10.1093/jjfinec/nbaa025
+D. Gu, S., Kelly, B., & Xiu, D. (2018). Empirical asset pricing via machine learning. The Review of Financial Studies, 33(5), 2223–2273. https://doi.org/10.1093/rfs/hhaa009
+E. Sadhwani, A., Giesecke, K., & Sirignano, J. (2021). Deep learning for mortgage risk. Journal of Financial Econometrics, 19(2), 313–368. https://doi.org/10.1093/rfs/hhaa009
+F. Mehta, R., & Al-Farsi, H. (2022). Reinforcement learning for algorithmic fraud detection in Gulf retail banks. Journal of Financial Technology and Risk, 14(2), 88–104. https://doi.org/10.1016/j.jftr.2022.014417
+G. Heaton, J. B., Polson, N. G., & Witte, J. H. (2017). Deep learning for finance: Deep portfolios. Applied Stochastic Models in Business and Industry, 33(1), 3–12.
+H. GU S, KELLY B, XIU D. Empirical Asset Pricing via Machine Learning. Rev Financ Stud 2020;33:2223-73.
+I. Bank for International Settlements. Artificial intelligence in finance. https://www.bis.org/topic/fintech.htm

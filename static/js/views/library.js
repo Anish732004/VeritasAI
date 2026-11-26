@@ -33,7 +33,7 @@ export async function render() {
   const dupes = refs.filter(r => r.duplicates?.length).length;
 
   return heading('Your knowledge collection', 'Research Library', 'Organise sources across projects: folders, tags, notes, full text and duplicate alerts. Verification work happens in the Verification Centre.',
-    '<button data-action="add-reference">＋ Add source</button><a href="/api/backup" class="small" download>Download backup (JSON)</a>')
+    '<button data-action="add-reference">＋ Paste or add sources</button><a href="/api/backup" class="small" download>Download backup (JSON)</a>')
     + `<section class="panel">
       <form data-submit="lib-filter" class="row">
         <label class="sr-only" for="lib_q">Search</label><input id="lib_q" name="q" value="${esc(view.q)}" placeholder="Search title, author, DOI, notes, tags" style="flex:1;min-width:220px">

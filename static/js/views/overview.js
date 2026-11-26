@@ -35,7 +35,7 @@ export async function render() {
 
   return `
     <div class="heading"><div><div class="eyebrow">Research command centre</div><h1>Good to see you, ${esc(name)}.</h1>
-      <p>Your research, with an evidence trail you can inspect.</p></div><button data-action="new-project">＋ New research</button></div>
+      <p>Your research, with an evidence trail you can inspect.</p></div><div class="row"><button class="ghost" data-action="add-reference" title="Paste a reference list (from an AI chatbot, a reading list or your draft) to check every reference">＋ Paste references to check</button><button data-action="new-project">＋ New research</button></div></div>
     <div class="hero"><div><div class="eyebrow">The standard for responsible research</div><h2>Make every claim accountable.</h2>
       <p>Plan the search, verify every source against Crossref and OpenAlex, link claims to real passages, challenge them, and cite only what you approved.</p>
       <button data-action="go" data-page="studio">Open Research Studio →</button></div>
