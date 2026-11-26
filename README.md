@@ -95,7 +95,7 @@ VERITAS_LIVE=1 .venv/bin/python -m pytest -q tests/test_api_live.py
 
 ## Demo script (blueprint section 10)
 
-1. **Discover**: Research Studio → generate the plan → edit concepts → **Approve plan** → **Search OpenAlex**. Each result shows why it matched, its venue tier and its score. The footer shows what was filtered out.
+1. **Discover**: Research Studio → generate the plan → edit concepts → **Approve plan** → **Search OpenAlex**. The question is searched as a whole, in pairs of concepts and one concept at a time, and results are grouped by how much of it each paper covers (all concepts, several, or one; the best 3 per concept). No paper is dropped just for missing a concept. Each result shows why it matched, its coverage, venue tier and score, and with AI on, a relevance rating that orders papers within each group. The footer shows what was filtered out and why.
 2. **Verify**: **Save & verify** a result: it is checked automatically. In Verification Centre, **Check a reference** with a real DOI (`10.1016/j.jbusres.2020.11.022`) and a wrong title to show a Mismatch with a side-by-side comparison.
 3. **Trace**: Evidence Graph → **Add claim** → choose a source → pick a suggested sentence. The claim becomes *Source-supported*, and the reason is shown.
 4. **Challenge**: Contradiction Radar → **Run Red Team**. Link a qualifying study; the claim becomes *Contradicted / qualified*.

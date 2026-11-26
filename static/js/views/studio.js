@@ -96,7 +96,7 @@ function resultCard(r, i) {
     <div style="min-width:0">
       <h3>${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>` : esc(r.title)}</h3>
       <p class="meta">${esc(authorsText(r.authors, 3))} · ${esc(r.year)} · <i>${esc(r.journal || 'Unknown venue')}</i></p>
-      <div class="row" style="margin-top:6px">${r.kind === 'conference-paper' ? '<span class="badge info" title="Presented at a conference. Check how the conference reviewed papers (full papers or abstracts only)."><span aria-hidden="true">◈</span>Conference paper</span>' : ''}${tierBadge(r.venue)}${r.foundational ? '<span class="badge info">Foundational (older, highly cited)</span>' : ''}${r.abstract ? '' : '<span class="badge warn">No abstract</span>'}<span class="mono">${esc(r.doi || 'No DOI')}</span></div>
+      <div class="row" style="margin-top:6px">${r.kind === 'conference-paper' ? '<span class="badge info" title="Presented at a conference. Check how the conference reviewed papers (full papers or abstracts only)."><span aria-hidden="true">◈</span>Conference paper</span>' : ''}${coverageBadge(r)}${tierBadge(r.venue)}${r.foundational ? '<span class="badge info">Foundational (older, highly cited)</span>' : ''}${r.abstract ? '' : '<span class="badge warn">No abstract</span>'}<span class="mono">${esc(r.doi || 'No DOI')}</span></div>
       <p class="why" style="margin-top:8px">Why it matched: ${esc(r.why)}</p>
       ${aiBlock(r)}
       ${r.abstract ? `<details><summary>Abstract</summary><p class="small">${esc(r.abstract)}</p></details>` : ''}
@@ -109,19 +109,48 @@ function resultCard(r, i) {
   </article>`;
 }
 
+function coverageBadge(r) {
+  const c = r.coverage;
+  if (!c || r.foundational || !c.of) return '';
+  const cls = c.section === 'all' ? 'good' : c.section === 'several' ? 'info' : '';
+  return `<span class="badge ${cls}" title="Required concepts found in the title or abstract: ${esc(c.labels.join(', '))}">Covers ${c.matched} of ${c.of} concepts</span>`;
+}
+
+const SECTION_TEXT = {
+  all: ['Covers every required concept', 'The closest match to your whole question.'],
+  several: ['Covers several concepts', 'Bridges two or more parts of your question: often the core of a review on a broad topic.'],
+  one: ['Key papers on one part of the question', 'Background for a single concept (the best 3 per concept). Useful for your literature review sections.'],
+  foundational: ['Foundational works', 'Older, highly cited papers on the whole question.'],
+};
+
+function resultSections(results) {
+  let html = '', current = null;
+  results.forEach((r, i) => {
+    const sec = r.foundational ? 'foundational' : (r.coverage?.section || 'one');
+    if (sec !== current) {
+      current = sec;
+      const n = results.filter(x => (x.foundational ? 'foundational' : (x.coverage?.section || 'one')) === sec).length;
+      html += `<h4 class="resultsection">${esc(SECTION_TEXT[sec][0])} <span class="muted">(${n})</span></h4><p class="small muted" style="margin:-4px 0 8px">${esc(SECTION_TEXT[sec][1])}</p>`;
+    }
+    html += resultCard(r, i);
+  });
+  return html;
+}
+
 function resultsBlock() {
   const d = lastSearch.data;
   if (!d || lastSearch.projectId !== state.projectId) return empty('Approve the plan, then search. Results appear here with the reason each one matched.');
   const r = d.report;
   const removed = Object.entries(r.removed).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(' · ');
   const air = r.ai_relevance;
-  const aiNote = air ? `<div class="notice">AI relevance check: <b>${air.rated}</b> papers rated against your question${air.off_topic ? `, <b>${air.off_topic}</b> rated likely off-topic and moved to the bottom (nothing was removed)` : ''}. Ratings are the model's reading of each title and abstract: check them against the papers. Half of each paper's score now comes from the rating.</div>`
+  const aiNote = air ? `<div class="notice">AI relevance check: <b>${air.rated}</b> papers rated against your question${air.off_topic ? `, <b>${air.off_topic}</b> rated likely off-topic and moved to the bottom (nothing was removed)` : ''}. Ratings are the model's reading of each title and abstract: check them against the papers. Half of each paper's score now comes from the rating.${air.partial ? ` <b>${esc(air.partial)}</b>` : ''}</div>`
     : r.ai_relevance_error ? `<div class="notice warn">The AI relevance check could not run: ${esc(r.ai_relevance_error)} Results are ranked by the standard score.</div>`
     : state.status?.ai ? '' : `<p class="small muted">Turn on AI in Settings to also rate how relevant each result is to your question.</p>`;
   return `${aiNote}${r.too_few ? `<div class="notice warn">${esc(r.too_few)}</div>` : ''}${r.relaxed ? `<div class="notice">${esc(r.relaxed)}</div>` : ''}
-    ${d.results.map(resultCard).join('') || empty('No paper passed every filter. Widen the time window, lower the venue tier or make a concept optional.')}
-    <p class="reportline muted"><b>${r.retrieved}</b> retrieved · <b>${r.shown}</b> shown${r.conference_papers ? ` (${r.conference_papers} conference)` : ''}${removed ? ' · removed: ' + esc(removed) : ''} · ${esc(r.window)} · tier ${esc(r.min_tier)}+</p>
-    <details><summary>Search details</summary><div class="stack small" style="margin-top:6px">${r.queries.map(q => `<div class="querybox">${esc(q.query)}<br><span style="color:#8fa6d8">${q.count.toLocaleString()} matches in OpenAlex before filtering by concept and venue</span></div>`).join('')}
+    ${r.query_warning ? `<div class="notice warn">${esc(r.query_warning)}</div>` : ''}
+    ${resultSections(d.results) || empty('No paper matched any of your concepts. Widen the time window, lower the venue tier or add synonyms to the concepts.')}
+    <p class="reportline muted"><b>${r.retrieved}</b> retrieved from ${r.queries.length} searches · <b>${r.shown}</b> shown${r.conference_papers ? ` (${r.conference_papers} conference)` : ''}${removed ? ' · removed: ' + esc(removed) : ''} · ${esc(r.window)} · tier ${esc(r.min_tier)}+</p>
+    <details><summary>Search details</summary><div class="stack small" style="margin-top:6px"><p>Each part of the question is searched separately as well as together, so papers that cover only some concepts are still found.</p>${r.queries.map(q => `<div class="querybox"><span style="color:#9fb3df">${esc({ all: 'All required concepts', pair: 'Two concepts', one: 'One concept' }[q.kind] || 'Search')}${q.concepts ? ': ' + esc(q.concepts.join(' + ')) : ''}</span><br>${esc(q.query)}<br><span style="color:#8fa6d8">${q.count.toLocaleString()} matches in OpenAlex before filtering by concept and venue</span></div>`).join('')}
       <p class="mono">Filters: ${esc(r.filters.join(', '))}</p>${r.venue_warning ? `<p>${esc(r.venue_warning)}</p>` : ''}<p>${esc(r.note)}</p></div></details>`;
 }
 

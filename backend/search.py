@@ -10,7 +10,9 @@ Stages (each one is reported back to the student):
 """
 import csv
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from itertools import combinations
 
 from . import ai, scholarly
 from .config import CONFERENCE_LIST_PATH, JOURNAL_LIST_PATH
@@ -184,6 +186,50 @@ def explain(hits: list[dict], tier: dict, work: dict) -> str:
     return " · ".join(bits)
 
 
+SECTIONS = ("all", "several", "one")
+SECTION_CAP = {"all": 20, "several": 25}
+BACKGROUND_PER_CONCEPT = 3
+
+
+def _or_block(group: dict) -> str:
+    return "(" + " OR ".join(_quote(t) for t in group["terms"][:10]) + ")"
+
+
+def facet_queries(required: list[dict]) -> list[tuple[str, list[dict], int]]:
+    """The searches to run: all required concepts together, every pair (papers that bridge two parts of the
+    question) and each concept alone (the key papers on each part). The plan lists the most essential concepts
+    first, so pairs involving them come first."""
+    n = len(required)
+    qs = [("all", required, 50)]
+    if n >= 3:
+        pairs = sorted(combinations(range(n), 2), key=lambda p: (p[0] + p[1], p))[:6]
+        qs += [("pair", [required[i], required[j]], 25) for i, j in pairs]
+    if n >= 2:
+        qs += [("one", [g], 15) for g in required[:5]]
+    return qs
+
+
+def section_of(matched: int, required_n: int) -> str | None:
+    """Which part of the result list a paper belongs to, by how many required concepts it covers."""
+    if matched == 0:
+        return None
+    if matched >= required_n:
+        return "all"
+    return "several" if matched >= 2 else "one"
+
+
+def section_rank(w: dict) -> int:
+    """Order of the result groups: covers everything, covers several, covers one, then foundational works."""
+    if w.get("foundational"):
+        return len(SECTIONS)
+    return SECTIONS.index((w.get("coverage") or {}).get("section", "one"))
+
+
+def order_results(results: list[dict]) -> list[dict]:
+    """Group by coverage, best score first inside each group (stable, so equal scores keep their order)."""
+    return sorted(results, key=lambda w: (section_rank(w), -w["score"]["total"]))
+
+
 def discover(plan: dict, existing_dois: set[str], existing_titles: set[str]) -> dict:
     groups = plan.get("concept_groups") or []
     if not groups:
@@ -201,42 +247,52 @@ def discover(plan: dict, existing_dois: set[str], existing_titles: set[str]) -> 
     if f.get("language"):
         filters.append(f"language:{f['language']}")
 
-    report = {"queries": [], "filters": filters, "relaxed": None}
-    query = build_query(groups)
-    works, count = scholarly.openalex_search(query, filters, per_page=50)
-    report["queries"].append({"query": query, "count": count})
-    # Many required concepts can leave too few papers. Relax from the end of the list (the plan lists the most
-    # essential concepts first), one concept at a time, until there are enough candidates. A relaxed concept
-    # becomes optional: it still raises the ranking, but a paper is no longer dropped for missing it.
     required = [g for g in groups if g.get("required")] or groups[:1]
-    relaxed: list[str] = []
-    seen = {w["external_id"] for w in works}
-    for drop in range(1, len(required)):
-        if len(works) >= 8:
-            break
-        query_n = build_query(groups, drop=drop)
-        more, count_n = scholarly.openalex_search(query_n, filters, per_page=50)
-        report["queries"].append({"query": query_n, "count": count_n})
-        relaxed = [g["label"] for g in required[len(required) - drop:]]
-        works += [w for w in more if w["external_id"] not in seen]
-        seen |= {w["external_id"] for w in more}
-    if relaxed:
-        report["relaxed"] = (f"Only {len(works)} papers matched all {len(required)} required concepts, so "
-                             + ", ".join(relaxed) + (" was" if len(relaxed) == 1 else " were")
-                             + " made optional: papers are no longer dropped for missing "
-                             + ("it" if len(relaxed) == 1 else "them") + ", but they rank lower.")
-    effective = [{**g, "required": g.get("required") and g["label"] not in relaxed} if g.get("required") else g
-                 for g in groups]
-    if not any(g.get("required") for g in effective):
-        effective = groups
+    if not any(g.get("required") for g in groups):
+        groups = [{**g, "required": g in required} for g in groups]
+    plan_q = facet_queries(required)
+    report = {"queries": [], "filters": filters, "relaxed": None}
+
+    def run(q):
+        kind, gs, per_page = q
+        query = " AND ".join(_or_block(g) for g in gs)
+        works, count = scholarly.openalex_search(query, filters, per_page=per_page)
+        return kind, gs, query, works, count
+
+    # The searches are independent, so they run side by side.
+    outcomes, errors = [], []
+    with ThreadPoolExecutor(max_workers=3) as pool_:  # gentle on OpenAlex rate limits
+        futures = [pool_.submit(run, q) for q in plan_q]
+        for fut in futures:
+            try:
+                outcomes.append(fut.result())
+            except scholarly.ServiceError as e:
+                errors.append(e)
+    if not outcomes:
+        raise errors[0]
+    works, seen = [], set()
+    for kind, gs, query, found, count in outcomes:
+        report["queries"].append({"query": query, "count": count, "kind": kind, "concepts": [g["label"] for g in gs]})
+        for w in found:
+            if w["external_id"] not in seen:
+                seen.add(w["external_id"])
+                works.append(w)
+    if errors:
+        report["query_warning"] = f"{len(errors)} of {len(plan_q)} searches could not run ({errors[0]}); results come from the rest."
 
     foundational = []
     if f.get("include_foundational"):
         old_filters = [x for x in filters if not x.startswith("from_publication_date")]
         old_filters.append(f"to_publication_date:{from_date}")
-        foundational, _ = scholarly.openalex_search(query, old_filters, per_page=5, sort="cited_by_count:desc")
+        try:
+            foundational, _ = scholarly.openalex_search(" AND ".join(_or_block(g) for g in required), old_filters,
+                                                        per_page=5, sort="cited_by_count:desc")
+        except scholarly.ServiceError:
+            foundational = []
         for w in foundational:
-            w["foundational"] = True
+            if w["external_id"] not in seen:
+                w["foundational"] = True
+        foundational = [w for w in foundational if w.get("foundational")]
 
     pool = works + foundational
     try:
@@ -254,44 +310,68 @@ def discover(plan: dict, existing_dois: set[str], existing_titles: set[str]) -> 
     top = max(raw) if raw else 1
 
     min_rank = TIER_ORDER.get(str(f.get("min_tier") or "C").upper(), 1)
-    removed = {"below venue tier": 0, "missing a required concept": 0, "already in project": 0}
+    removed = {"below venue tier": 0, "no concept in title or abstract": 0, "already in project": 0,
+               "more background papers than shown": 0}
     results = []
     for i, w in enumerate(pool):
         tier = venue_tier(w, sources, journal_list, conference_list)
-        hits = concept_hits(w, effective)
+        hits = concept_hits(w, groups)
         key_doi = w.get("doi")
         if (key_doi and key_doi in existing_dois) or w["title"].lower() in existing_titles:
             removed["already in project"] += 1
             continue
-        if any(h["required"] and not h["where"] for h in hits) and not w.get("foundational"):
-            removed["missing a required concept"] += 1
+        matched = [h["label"] for h in hits if h["required"] and h["where"]]
+        section = section_of(len(matched), len(required))
+        if section is None and not w.get("foundational"):
+            removed["no concept in title or abstract"] += 1
             continue
         if TIER_ORDER[tier["tier"]] < min_rank and tier["tier"] != "Unrated":
             removed["below venue tier"] += 1
             continue
         s = score(w, hits, (raw[i] / top) if top else 0, tier, years)
-        w.update({"venue": tier, "concepts": hits, "score": s, "why": explain(hits, tier, w)})
+        w.update({"venue": tier, "concepts": hits, "score": s, "why": explain(hits, tier, w),
+                  "coverage": {"matched": len(matched), "of": len(required), "section": section or "one",
+                               "labels": matched}})
         results.append(w)
-    results.sort(key=lambda w: (not w.get("foundational"), w["score"]["total"]), reverse=True)
-    results = [w for w in results if not w.get("foundational")][:20] + [w for w in results if w.get("foundational")][:5]
+
+    results = order_results(results)
+    shown, per_concept = [], {}
+    count_in = {k: 0 for k in SECTIONS}
+    for w in results:
+        if w.get("foundational"):
+            continue
+        sec = w["coverage"]["section"]
+        if sec == "one":
+            label = w["coverage"]["labels"][0]
+            if per_concept.get(label, 0) >= BACKGROUND_PER_CONCEPT:
+                removed["more background papers than shown"] += 1
+                continue
+            per_concept[label] = per_concept.get(label, 0) + 1
+        elif count_in[sec] >= SECTION_CAP[sec]:
+            continue
+        count_in[sec] += 1
+        shown.append(w)
+    shown += [w for w in results if w.get("foundational")][:5]
 
     report.update({
         "retrieved": len(pool),
-        "shown": len(results),
+        "shown": len(shown),
+        "sections": {k: count_in[k] for k in SECTIONS},
+        "required": [g["label"] for g in required],
         "removed": removed,
         "window": f"Published since {from_date}",
-        "conference_papers": len([r for r in results if is_conference(r)]),
+        "conference_papers": len([r for r in shown if is_conference(r)]),
         "conference_list": bool(conference_list),
         "min_tier": str(f.get("min_tier") or "C").upper(),
-        "note": ("Results come from OpenAlex only; they are candidate sources, not evidence for any claim. "
-                 "Venue tiers use journal or conference citation metrics (or your journal and conference lists) and are a "
-                 "screening aid, not a judgement of an individual paper. Check how a conference reviewed its papers "
-                 "(full papers or abstracts only)."),
+        "note": ("Results come from OpenAlex only; they are candidate sources, not evidence for any claim. Papers are "
+                 "grouped by how many of your required concepts their title or abstract covers; a paper covering one "
+                 "part of a broad question can still be essential. Venue tiers are a screening aid, not a judgement "
+                 "of an individual paper."),
     })
-    if len([r for r in results if not r.get("foundational")]) < 5:
-        report["too_few"] = ("Fewer than 5 papers passed. Consider widening the time window, lowering the "
-                             "venue tier or making a concept group optional. Nothing was added to fill the list.")
-    return {"results": results, "report": report}
+    if len([r for r in shown if not r.get("foundational")]) < 5:
+        report["too_few"] = ("Fewer than 5 papers were found. Consider widening the time window, lowering the venue "
+                             "tier or adding synonyms to the concepts. Nothing was added to fill the list.")
+    return {"results": shown, "report": report}
 
 
 # ---------------------------------------------------------------- AI relevance check
@@ -308,7 +388,7 @@ RELEVANCE_TASK = (
     "and how it relates to the question) and quote (one sentence copied exactly from the title or abstract that "
     "supports your level, or an empty string). Return a JSON list with one object per paper. Never invent details."
 )
-MAX_RATED = 30
+MAX_RATED = 50
 
 
 def apply_ai_relevance(results: list[dict], data, model: str = "") -> int:
@@ -343,15 +423,20 @@ def apply_ai_relevance(results: list[dict], data, model: str = "") -> int:
         if level is not None:
             r["score"]["parts"]["ai"] = round(level / 3, 3)
             r["score"]["total"] = round(0.5 * base + 0.5 * (level / 3), 3)
-    # Re-rank within each group (recent papers, then foundational ones), keeping the group order.
-    main = sorted([r for r in results if not r.get("foundational")], key=lambda r: r["score"]["total"], reverse=True)
-    old = sorted([r for r in results if r.get("foundational")], key=lambda r: r["score"]["total"], reverse=True)
-    results[:] = main + old
+    # Re-rank inside each coverage group (all concepts, several, one, foundational), keeping the group order.
+    results[:] = order_results(results)
     return rated
 
 
+RATING_BATCH = 12  # papers per request; batches run side by side, so 36 papers take about as long as 12
+
+
 def ai_relevance(question: str, plan: dict, results: list[dict]) -> dict:
-    """Ask the model to rate how relevant each result is to the research question (needs AI turned on)."""
+    """Ask the model to rate how relevant each result is to the research question (needs AI turned on).
+
+    Papers are rated in small batches that run in parallel: one long request for every paper was slow
+    (the model writes its answers one after another). A failed batch leaves its papers unrated, not lost.
+    """
     batch = results[:MAX_RATED]
     if not batch:
         return {"rated": 0, "model": None}
@@ -359,11 +444,31 @@ def ai_relevance(question: str, plan: dict, results: list[dict]) -> dict:
     required = "; ".join(g["label"] for g in plan.get("concept_groups") or [] if g.get("required"))
     context = "Research question: " + question + (f"\nHow it was understood: {note}" if note else "") + \
               (f"\nConcepts papers should cover: {required}" if required else "")
-    papers = [{"i": i, "title": r["title"], "year": r.get("year"), "venue": r.get("journal"),
-               "abstract": (r.get("abstract") or "")[:1000]} for i, r in enumerate(batch)]
-    data, meta = ai.complete_json(RELEVANCE_TASK, context, data=json.dumps(papers), max_tokens=3000,
-                                  inputs=[r.get("external_id", "") for r in batch])
-    rated = apply_ai_relevance(batch, data, meta.get("model", ""))
-    results[:] = sorted([r for r in results if not r.get("foundational")], key=lambda r: r["score"]["total"], reverse=True) + \
-                 sorted([r for r in results if r.get("foundational")], key=lambda r: r["score"]["total"], reverse=True)
-    return {"rated": rated, "model": meta.get("model"), "meta": meta, "off_topic": len([r for r in results if (r.get("ai_relevance") or {}).get("level") == 0])}
+    chunks = [batch[i:i + RATING_BATCH] for i in range(0, len(batch), RATING_BATCH)]
+
+    def rate(chunk):
+        papers = [{"i": i, "title": r["title"], "year": r.get("year"), "venue": r.get("journal"),
+                   "abstract": (r.get("abstract") or "")[:900]} for i, r in enumerate(chunk)]
+        return ai.complete_json(RELEVANCE_TASK, context, data=json.dumps(papers), max_tokens=2500,
+                                inputs=[r.get("external_id", "") for r in chunk])
+
+    rated, meta, errors = 0, None, []
+    with ThreadPoolExecutor(max_workers=4) as pool_:
+        futures = [(chunk, pool_.submit(rate, chunk)) for chunk in chunks]
+        for chunk, fut in futures:
+            try:
+                data, m = fut.result()
+            except ai.AIUnavailable as e:
+                errors.append(e)
+                continue
+            meta = meta or m
+            rated += apply_ai_relevance(chunk, data, m.get("model", ""))
+    if meta is None:
+        raise errors[0]
+    meta = {**meta, "inputs": [r.get("external_id", "") for r in batch]}
+    results[:] = order_results(results)
+    out = {"rated": rated, "model": meta.get("model"), "meta": meta,
+           "off_topic": len([r for r in results if (r.get("ai_relevance") or {}).get("level") == 0])}
+    if errors:
+        out["partial"] = f"{len(errors)} of {len(chunks)} rating batches failed ({errors[0]}); those papers are unrated."
+    return out

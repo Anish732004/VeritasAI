@@ -1,5 +1,6 @@
 """Offline tests for the AI relevance check on search results (the model is replaced by a stand-in)."""
 import importlib
+import json
 import os
 import tempfile
 
@@ -142,3 +143,46 @@ def test_search_without_ai_has_no_ai_fields(client, monkeypatch):
     monkeypatch.setattr(ai, "complete_json", lambda *a, **k: pytest.fail("AI is off"))
     out = c.post(f"/api/projects/{pid}/search").json()
     assert "ai_relevance" not in out["report"] and "ai_relevance_error" not in out["report"]
+
+
+def many(n):
+    return [paper(i, f"Paper {i} on power plants", f"Sentence {i} about power plants.", 0.5) for i in range(n)]
+
+
+def test_ratings_are_requested_in_parallel_batches_and_land_on_the_right_papers(monkeypatch):
+    calls = []
+
+    def fake(task, prompt, **kw):
+        papers = json.loads(kw["data"])
+        calls.append([p["title"] for p in papers])
+        # rate by the paper's own number so a mix-up between batches would show
+        return [{"i": p["i"], "level": int(p["title"].split()[1]) % 4, "reason": p["title"], "quote": ""} for p in papers], \
+               {"model": "m", "prompt_version": "t"}
+    monkeypatch.setattr(ai, "complete_json", fake)
+    rs = many(30)
+    out = search.ai_relevance("q", {}, rs)
+    assert out["rated"] == 30 and len(calls) == 3 and max(len(c) for c in calls) == search.RATING_BATCH
+    assert all(r["ai_relevance"]["reason"] == r["title"] for r in rs)          # each rating on its own paper
+    assert out["meta"]["inputs"] and len(out["meta"]["inputs"]) == 30
+
+
+def test_a_failed_batch_leaves_its_papers_unrated_but_keeps_the_rest(monkeypatch):
+    def flaky(task, prompt, **kw):
+        papers = json.loads(kw["data"])
+        if "Paper 12 " in papers[0]["title"]:
+            raise ai.AIUnavailable("NVIDIA took too long to answer.")
+        return [{"i": p["i"], "level": 2, "reason": "r", "quote": ""} for p in papers], {"model": "m", "prompt_version": "t"}
+    monkeypatch.setattr(ai, "complete_json", flaky)
+    rs = many(30)
+    out = search.ai_relevance("q", {}, rs)
+    assert out["rated"] == 18 and "1 of 3 rating batches failed" in out["partial"]
+    assert len(rs) == 30 and sum("ai_relevance" in r for r in rs) == 18
+
+
+def test_all_batches_failing_reports_the_error(monkeypatch):
+    def down(*a, **k):
+        raise ai.AIUnavailable("NVIDIA rejected the key.")
+    monkeypatch.setattr(ai, "complete_json", down)
+    with pytest.raises(ai.AIUnavailable, match="rejected"):
+        search.ai_relevance("q", {}, many(5))
+

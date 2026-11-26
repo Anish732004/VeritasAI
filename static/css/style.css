@@ -278,3 +278,5 @@ dialog::backdrop { background: #111e3477; }
 .groupnote .chip { font-size: 12px; }
 
 button.chip { cursor: pointer; }
+.resultsection { margin: 18px 0 6px; font-size: 15px; }
+.resultsection:first-of-type { margin-top: 6px; }

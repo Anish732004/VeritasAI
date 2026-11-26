@@ -228,32 +228,81 @@ def groups4():
            [{"label": "Optional", "required": False, "terms": ["optional"]}]
 
 
-def test_relaxation_goes_one_concept_at_a_time_and_keeps_relaxed_papers(monkeypatch):
-    """With few matches for all four required concepts, the last ones are relaxed step by step, and papers
-    that miss only a relaxed concept are kept (before the fix they were fetched and then thrown away)."""
-    queries = []
-    full = [work(1, "alpha beta gamma delta study")]
-    step1 = full + [work(2, "alpha beta gamma only")]                                 # lacks Delta
-    step2 = step1 + [work(i, f"alpha beta paper {i}") for i in range(3, 10)]           # lack Gamma and Delta
+FOUR = ["Alpha", "Beta", "Gamma", "Delta"]
 
-    def fake_search(query, filters, per_page=50, sort=None):
-        queries.append(query)
-        return {1: (full, 1), 2: (step1, 2), 3: (step2, 9)}[len(queries)]
-    monkeypatch.setattr(scholarly, "openalex_search", fake_search)
+
+def facet_search(papers_by_query):
+    """Stand-in for OpenAlex: returns papers whose title contains every concept named in the query."""
+    calls = []
+
+    def fake(query, filters, per_page=50, sort=None):
+        calls.append(query)
+        wanted = [w for w in ("alpha", "beta", "gamma", "delta") if w in query]
+        found = [w for w in papers_by_query if all(x in w["title"] for x in wanted)]
+        return found[:per_page], len(found)
+    return fake, calls
+
+
+def test_each_part_of_the_question_is_searched_and_nothing_is_dropped_for_missing_a_concept(monkeypatch):
+    papers = [work(1, "alpha beta gamma delta study"), work(2, "alpha beta gamma model"), work(3, "alpha beta method"),
+              work(4, "gamma delta survey"), work(5, "alpha only paper"), work(6, "beta only paper"), work(7, "unrelated words")]
+    fake, calls = facet_search(papers)
+    monkeypatch.setattr(scholarly, "openalex_search", fake)
     monkeypatch.setattr(scholarly, "openalex_sources", lambda ids: {"S1": {"summary_stats": {"2yr_mean_citedness": 4, "h_index": 90}}})
     out = search.discover({"concept_groups": groups4(), "filters": {"min_tier": "C"}}, set(), set())
-    assert len(queries) == 3 and "delta" in queries[0] and "delta" not in queries[1] and "gamma" not in queries[2]
-    titles = [r["title"] for r in out["results"]]
-    assert "alpha beta paper 3" in titles and "alpha beta gamma only" in titles  # kept although they miss relaxed concepts
-    rep = out["report"]
-    assert "Gamma, Delta were made optional" in rep["relaxed"] and out["report"]["removed"]["missing a required concept"] == 0
-    assert titles[0] == "alpha beta gamma delta study"  # fully matching paper still ranks first
+    assert len(calls) == 1 + 6 + 4                      # all together, every pair, each concept alone
+    kinds = [q["kind"] for q in out["report"]["queries"]]
+    assert kinds.count("all") == 1 and kinds.count("pair") == 6 and kinds.count("one") == 4
+    by_title = {r["title"]: r["coverage"] for r in out["results"]}
+    assert by_title["alpha beta gamma delta study"]["section"] == "all"
+    assert by_title["alpha beta gamma model"] == {"matched": 3, "of": 4, "section": "several", "labels": ["Alpha", "Beta", "Gamma"]}
+    assert by_title["gamma delta survey"]["section"] == "several"
+    assert by_title["alpha only paper"]["section"] == "one" and by_title["beta only paper"]["section"] == "one"
+    assert out["report"]["removed"].get("missing a required concept") is None
+    assert [r["coverage"]["section"] for r in out["results"]] == sorted(
+        [r["coverage"]["section"] for r in out["results"]], key=search.SECTIONS.index)   # grouped in order
+    assert out["report"]["sections"] == {"all": 1, "several": 3, "one": 2}
 
 
-def test_papers_missing_a_still_required_concept_are_dropped(monkeypatch):
-    plenty = [work(i, f"alpha beta gamma delta {i}") for i in range(10)] + [work(99, "alpha only")]
-    monkeypatch.setattr(scholarly, "openalex_search", lambda *a, **k: (plenty, 11))
-    monkeypatch.setattr(scholarly, "openalex_sources", lambda ids: {"S1": {"summary_stats": {"2yr_mean_citedness": 4, "h_index": 90}}})
+def test_papers_with_no_concept_in_title_or_abstract_are_left_out(monkeypatch):
+    monkeypatch.setattr(scholarly, "openalex_search", lambda *a, **k: ([work(1, "alpha beta gamma delta"), work(2, "full text only match")], 2))
+    monkeypatch.setattr(scholarly, "openalex_sources", lambda ids: {})
     out = search.discover({"concept_groups": groups4(), "filters": {"min_tier": "C"}}, set(), set())
-    assert out["report"]["relaxed"] is None
-    assert "alpha only" not in [r["title"] for r in out["results"]] and out["report"]["removed"]["missing a required concept"] == 1
+    assert [r["title"] for r in out["results"]] == ["alpha beta gamma delta"]
+    assert out["report"]["removed"]["no concept in title or abstract"] == 1
+
+
+def test_background_papers_are_capped_per_concept(monkeypatch):
+    papers = [work(i, f"alpha paper {i}") for i in range(10)] + [work(50, "alpha beta gamma delta")]
+    fake, _ = facet_search(papers)
+    monkeypatch.setattr(scholarly, "openalex_search", fake)
+    monkeypatch.setattr(scholarly, "openalex_sources", lambda ids: {})
+    out = search.discover({"concept_groups": groups4(), "filters": {"min_tier": "C"}}, set(), set())
+    assert len([r for r in out["results"] if r["coverage"]["section"] == "one"]) == search.BACKGROUND_PER_CONCEPT
+    assert out["report"]["removed"]["more background papers than shown"] == 10 - search.BACKGROUND_PER_CONCEPT
+
+
+def test_one_failed_search_does_not_lose_the_others(monkeypatch):
+    def flaky(query, filters, per_page=50, sort=None):
+        if "delta" in query and "alpha" in query:
+            raise scholarly.ServiceError("OpenAlex", "rate limited", 429)
+        return [work(1, "alpha beta gamma delta")], 1
+    monkeypatch.setattr(scholarly, "openalex_search", flaky)
+    monkeypatch.setattr(scholarly, "openalex_sources", lambda ids: {})
+    out = search.discover({"concept_groups": groups4(), "filters": {"min_tier": "C"}}, set(), set())
+    assert out["results"] and "could not run" in out["report"]["query_warning"]
+
+
+def test_two_concepts_need_no_pair_searches_and_one_concept_just_one_search():
+    req2 = [{"label": x, "terms": [x.lower()]} for x in ("A", "B")]
+    assert [k for k, _, _ in search.facet_queries(req2)] == ["all", "one", "one"]
+    assert [k for k, _, _ in search.facet_queries(req2[:1])] == ["all"]
+
+
+def test_ai_ratings_rerank_inside_each_coverage_group_only():
+    def r(title, section, total):
+        return {"external_id": title, "title": title, "abstract": "x y z", "score": {"total": total, "parts": {}},
+                "coverage": {"section": section}}
+    rs = [r("all-low", "all", 0.4), r("several-high", "several", 0.9), r("one-best", "one", 0.95)]
+    search.apply_ai_relevance(rs, [{"i": 0, "level": 0}, {"i": 1, "level": 3}, {"i": 2, "level": 3}])
+    assert [x["title"] for x in rs] == ["all-low", "several-high", "one-best"]   # groups keep their order
