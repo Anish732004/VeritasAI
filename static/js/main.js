@@ -93,9 +93,9 @@ function renderBanner() {
     el.innerHTML = `◇ <b>Demo data.</b> This sample project contains synthetic sources that can never be verified or cited. Searches you run here still return live results.`;
   } else if (state.status?.ai_key && !state.status.ai) {
     el.className = 'demo';
-    el.innerHTML = `An OpenAI key is set, but AI features stay off until you have read what is sent to OpenAI and turned them on. <button class="link" data-action="go" data-page="settings">Review in Settings →</button>`;
+    el.innerHTML = `${esc(state.status.provider)} key is set, but AI features stay off until you have read what is sent to ${esc(state.status.provider)} and turned them on. <button class="link" data-action="go" data-page="settings">Review in Settings →</button>`;
   } else if (state.status && !state.status.ai) {
-    el.innerHTML = `Live mode · Search and verification use OpenAlex and Crossref in real time. AI features are off (no OPENAI_API_KEY), so planning, Red Team stance and summaries use transparent rule-based methods.`;
+    el.innerHTML = `Live mode · Search and verification use OpenAlex and Crossref in real time. AI features are off (no AI key in .env), so planning, Red Team stance and summaries use transparent rule-based methods.`;
   } else {
     el.innerHTML = '';
   }

@@ -32,7 +32,7 @@ Open http://127.0.0.1:8000. There is nothing to configure in the browser. On fir
 
 | Setting | What it turns on |
 |---|---|
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | AI-proposed plans (the model reads your question, scope and level, explains how it understood the question, and suggests concepts, synonyms and filters, all of which are cleaned and then editable), AI reading of counter-evidence abstracts, Red Team questions, an AI synthesis in the summary and the research assistant. With a key, AI stays off until you turn it on in **Settings → AI features**, which first shows what is sent to OpenAI. Without a key, every feature still works using transparent rule-based methods, and the app says so. |
+| `NVIDIA_API_KEY`, `NVIDIA_MODEL` (or `OPENAI_API_KEY`, `OPENAI_MODEL`) | AI-proposed plans (the model reads your question, scope and level, explains how it understood the question, and suggests concepts, synonyms and filters, all of which are cleaned and then editable), AI reading of counter-evidence abstracts, Red Team questions, an AI synthesis in the summary and the research assistant. With a key, AI stays off until you turn it on in **Settings → AI features**, which first shows what is sent to OpenAI. Without a key, every feature still works using transparent rule-based methods, and the app says so. |
 | `CONTACT_EMAIL` | Identifies the app to OpenAlex/Crossref ("polite pool") for faster, more reliable responses. Sent only to those two services. |
 | `OPENALEX_API_KEY` | Only needed if OpenAlex rate-limits you. |
 
@@ -53,10 +53,10 @@ Measured on research questions in `tests/data/` (the tests fail if a change make
 
 Without a key, Research Studio builds the concept map from word rules and a synonym list. With a key, a language model reads your question for meaning: it works out which concepts a paper must cover, adds the field's own terms, synonyms and acronyms, decides which concepts are essential (there is no limit on how many are required), explains in one sentence how it understood the question, and suggests a time window and whether conference papers matter. Its answer is cleaned (junk terms and duplicates removed), then **you edit and approve it** before anything is searched. After each search it also **rates how relevant every result is to your question** (from the title and abstract only) and blends the rating into the ranking, so papers that merely share a keyword sink and the best ones rise. Each result shows the rating, a one-sentence reason and, when the model quotes the paper, that quote only if it really appears there. Papers are never removed or accepted for you. If few papers match every required concept, the search relaxes the least essential ones step by step and tells you which.
 
-1. **Get an API key.** Sign in at <https://platform.openai.com/api-keys> and choose *Create new secret key*. Copy it straight away (it is shown once). API use is billed separately from a ChatGPT subscription: add a few dollars of credit under *Billing*. A full demo costs well under $1 with the default model.
-2. **Put it in `.env`.** In the project folder run `cp .env.example .env` (Windows: `Copy-Item .env.example .env`), open `.env` and write `OPENAI_API_KEY=sk-...` on one line, with no quotes or spaces. Never share the key or put it in chat, screenshots or GitHub (`.env` is git-ignored).
+1. **Get an API key.** Sign in at <https://build.nvidia.com>, open any model and choose *Get API Key* (it starts with `nvapi-`). An OpenAI key also works (`OPENAI_API_KEY`); with both set, NVIDIA is used unless `AI_PROVIDER=openai`.
+2. **Put it in `.env`.** In the project folder run `cp .env.example .env` (Windows: `Copy-Item .env.example .env`), open `.env` and write `NVIDIA_API_KEY=nvapi-...` on one line, with no quotes or spaces. The default model is `nvidia/nemotron-3.5-lightning-30b-a3b` (fast); set `NVIDIA_MODEL` to use another chat model from build.nvidia.com. Its "thinking" mode is switched off, because it made answers slow and could use the whole answer allowance before replying (`AI_THINKING=on` turns it back on). Never share the key or put it in chat, screenshots or GitHub (`.env` is git-ignored).
 3. **Restart the server.** Press `Ctrl+C` in the terminal, then start it again (see *Run it*). The server reads `.env` only at start-up.
-4. **Settings → Test connection → Turn AI on.** The test sends only the word OK. Turning AI on shows what is shared with OpenAI (your question and scope, claims, source titles and abstracts, linked passages; never whole PDFs, your name or your email) and asks you to confirm. Settings shows these steps with a tick for each one you have done, and explains errors such as a wrong key or no credit.
+4. **Settings → Test connection → Turn AI on.** The test sends only the word OK. Turning AI on shows what is shared with the provider (your question and scope, claims, source titles and abstracts, linked passages; never whole PDFs, your name or your email) and asks you to confirm. Settings shows these steps with a tick for each one you have done, and explains errors such as a wrong key or no credit.
 5. **Research Studio → Regenerate** in the plan. The plan should say *AI proposal* and show *How the question was understood*. Check it, edit anything, approve.
 
 Every AI call is recorded in the Audit Trail and labelled in the app. Turn AI off in Settings at any time.
@@ -122,7 +122,7 @@ backend/
   redteam.py           Research Red Team: rule checks + counter-evidence search
   citations.py         Academic Integrity Agent: CSL bibliography + Citation Risk Review
   governance.py        risk register, accountability, AI-use and data policy, AI-use disclosure
-  ai.py                optional language model (OpenAI), with provenance
+  ai.py                optional language model (NVIDIA API catalog or OpenAI), with provenance
   db.py, demo.py       SQLite schema (blueprint data model), sample data
 static/                front end: plain ES modules, one file per screen
 tests/                 offline logic tests + live end-to-end test
@@ -134,7 +134,7 @@ data/veritas.db        your local database (created on first run, not committed)
 | Next.js / React + Tailwind | Plain JavaScript ES modules and CSS: no build step, so everyone on the team can run it |
 | Python + FastAPI | ✓ |
 | LangGraph or equivalent | A small explicit workflow (`workflow.py`): five narrow agents, persisted runs, three enforced human checkpoints |
-| OpenAI API | ✓, optional; never used to decide whether a paper exists or what it says |
+| OpenAI API | NVIDIA API catalog (OpenAI-compatible) by default, OpenAI supported; optional; never used to decide whether a paper exists or what it says |
 | OpenAlex + Crossref | ✓, with a cache, retries and polite-pool identification |
 | PostgreSQL | SQLite with the same entities (Reference, VerificationResult, Claim, EvidenceRecord, ReviewDecision, AuditEvent) |
 | CSL citation engine | ✓ citeproc-py with official CSL styles |

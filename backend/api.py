@@ -14,7 +14,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field, StringConstraints
 
 from . import ai, citations, concepts, db, evidence, governance, redteam, scholarly, search, verify, workflow
-from .config import APP_VERSION, CONTACT_EMAIL, OPENAI_MODEL, OPENALEX_API_KEY, PROMPT_VERSION, ROOT, STATIC_DIR
+from .config import APP_VERSION, CONTACT_EMAIL, OPENALEX_API_KEY, PROMPT_VERSION, ROOT, STATIC_DIR
 from .db import audit, now
 from .demo import seed_demo
 from .text import strip_tags
@@ -111,7 +111,10 @@ def status():
     with db.db() as con:
         demo = con.execute("SELECT COUNT(*) FROM projects WHERE demo = 1").fetchone()[0]
         name = db.setting(con, "name", "Researcher")
-    return {"version": APP_VERSION, "ai": ai.available(), "model": OPENAI_MODEL if ai.available() else None,
+    return {"version": APP_VERSION, "ai": ai.available(), "model": ai.model() if ai.configured() else None,
+            "provider": ai.provider_name(), "key_var": ai.PROVIDERS[ai.provider()]["key_var"],
+            "key_note": ("Your NVIDIA key is saved as OPENAI_API_KEY. It works, but renaming it to NVIDIA_API_KEY in .env "
+                         "makes the setup clearer.") if ai.misplaced_key() else "",
             "ai_key": ai.configured(), "ai_enabled": ai.ENABLED,
             "openalex_key": bool(OPENALEX_API_KEY), "contact_email": bool(CONTACT_EMAIL), "demo_projects": demo,
             "name": name, "agents": list(workflow.AGENTS.values())}
@@ -141,11 +144,11 @@ class AIToggleIn(BaseModel):
 def set_ai(body: AIToggleIn):
     """The student's informed choice to send data to the AI provider (governance policy)."""
     if body.enabled and not ai.configured():
-        raise HTTPException(400, "Add OPENAI_API_KEY to .env and restart the server first.")
+        raise HTTPException(400, "Add an API key to .env (NVIDIA_API_KEY or OPENAI_API_KEY) and restart the server first.")
     with db.db() as con:
         db.set_setting(con, "ai_enabled", body.enabled)
         audit(con, "AI features turned " + ("on" if body.enabled else "off"),
-              details="Student acknowledged what is sent to OpenAI." if body.enabled else "")
+              details=f"Student acknowledged what is sent to {ai.provider_name()} ({ai.model()})." if body.enabled else "")
     ai.ENABLED = body.enabled
     return {"ok": True, "ai": ai.available()}
 
@@ -1088,7 +1091,7 @@ def ask(pid: str, body: AskIn):
         label = "Workflow guidance (no AI configured)"
         answer = ("No language model is configured, so here is the standard checklist instead: compare methods, samples "
                   "and settings across your sources; attach exact passages before accepting a claim; run the Red Team on "
-                  "each claim; and note limitations the authors report. Add OPENAI_API_KEY to .env to enable AI answers.")
+                  "each claim; and note limitations the authors report. Add an AI key to .env (see Settings) to enable AI answers.")
     with db.db() as con:
         db.insert(con, "chat", {"id": db.new_id(), "project_id": pid, "question": body.question, "answer": answer,
                                 "ai": {"label": label, **(meta or {})}, "created_at": now()})

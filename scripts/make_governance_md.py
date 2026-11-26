@@ -34,7 +34,7 @@ for a, b, c in g.ACCOUNTABILITY:
     w(f"| {a} | {b} | {c} |")
 w("\nThe Audit Trail records who did what: every decision by the student, every agent run, and every AI call with its model, prompt version and inputs.\n")
 w("## 4. AI-use policy\n")
-w("The language model is optional. Without `OPENAI_API_KEY`, every feature uses transparent rule-based methods. With a key, AI stays **off** until the student turns it on in Settings, after being shown what is sent.\n")
+w("The language model is optional (NVIDIA's API catalog via `NVIDIA_API_KEY`, or OpenAI via `OPENAI_API_KEY`). Without a key, every feature uses transparent rule-based methods. With a key, AI stays **off** until the student turns it on in Settings, after being shown what is sent.\n")
 w("**The language model may:**\n")
 for x in g.AI_MAY:
     w(f"- {x}")

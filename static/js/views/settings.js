@@ -11,10 +11,10 @@ function aiSteps(s) {
   }
   return `<div style="margin:10px 0"><h4 style="margin-bottom:6px">Set up AI in five steps</h4>
     <ol class="steps-guide">
-      ${step(s.ai_key, '1. Get an OpenAI API key', 'Sign in at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com/api-keys</a> and choose <b>Create new secret key</b>. Copy it straight away: it is shown only once. API use is billed separately from a ChatGPT subscription, so add a few dollars of credit under Billing (a full demo costs well under $1 with the default model).')}
-      ${step(s.ai_key, '2. Put the key in <code>.env</code>', 'In the project folder, copy <code>.env.example</code> to <code>.env</code> (<code>cp .env.example .env</code>), open <code>.env</code> in any editor and write <code>OPENAI_API_KEY=sk-…</code> on one line, with no quotes or spaces. Never share the key or put it in chat, GitHub or a screenshot: <code>.env</code> is ignored by git for this reason.')}
+      ${step(s.ai_key, '1. Get an NVIDIA API key', 'Sign in at <a href="https://build.nvidia.com" target="_blank" rel="noopener">build.nvidia.com</a>, open any model and choose <b>Get API Key</b>. It starts with <code>nvapi-</code>. (An OpenAI key works too: put it in <code>OPENAI_API_KEY</code> instead.)')}
+      ${step(s.ai_key, '2. Put the key in <code>.env</code>', 'In the project folder, copy <code>.env.example</code> to <code>.env</code> (<code>cp .env.example .env</code>), open <code>.env</code> in any editor and write <code>NVIDIA_API_KEY=nvapi-…</code> on one line, with no quotes or spaces. Optionally choose a model with <code>NVIDIA_MODEL=</code>. Never share the key or put it in chat, GitHub or a screenshot: <code>.env</code> is ignored by git for this reason.')}
       ${step(s.ai_key, '3. Restart the server', 'In the terminal running VERITAS press <b>Ctrl+C</b>, then start it again with <code>.venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8000</code>. The server reads <code>.env</code> only when it starts.')}
-      ${step(false, '4. Test, then turn AI on', 'Come back to this page. Click <b>Test connection</b> (it sends no project data, only the word OK), then <b>Turn AI on</b> and read what is shared with OpenAI.')}
+      ${step(false, '4. Test, then turn AI on', 'Come back to this page. Click <b>Test connection</b> (it sends no project data, only the word OK), then <b>Turn AI on</b> and read what is shared with the provider.')}
       ${step(false, '5. Regenerate your plan', 'Open <b>Research Studio</b>, and click <b>Regenerate</b> in the plan. You should see “AI proposal” and a line saying how your question was understood. Check the concepts, then approve.')}
     </ol></div>`;
 }
@@ -26,15 +26,16 @@ export async function render() {
     + `<div class="grid">`
     + panel('You', `<form data-submit="settings-save" class="stack"><div class="field"><label for="s_name">Display name</label><input id="s_name" name="name" value="${esc(s.name)}" maxlength="80"></div><button type="submit" class="ghost">Save</button></form>`)
     + panel('Services', row(true, 'OpenAlex + Crossref', 'Live discovery and verification. Free; no key needed.')
-      + row(s.ai, `Language model${s.model ? ` (${esc(s.model)})` : ''}`, 'Set <code>OPENAI_API_KEY</code> to enable AI planning, Red Team stance reading, challenge questions and synthesis. Everything works without it using rule-based methods.')
+      + row(s.ai, `Language model${s.model ? `: ${esc(s.provider)} (${esc(s.model)})` : ''}`, 'Set <code>NVIDIA_API_KEY</code> (or <code>OPENAI_API_KEY</code>) to enable AI planning, relevance ratings, Red Team stance reading, challenge questions and synthesis. Everything works without it using rule-based methods.')
       + row(s.contact_email, 'Contact email for API “polite pool”', 'Optional <code>CONTACT_EMAIL</code>: OpenAlex and Crossref give faster, more reliable service to clients that identify themselves.')
       + row(s.openalex_key, 'OpenAlex API key', 'Optional <code>OPENALEX_API_KEY</code> if OpenAlex rate-limits you.'))
     + `</div>`
     + panel('AI features', `
-      <p>${s.ai ? `<b>On</b> (${esc(s.model)}).` : s.ai_key ? '<b>Off.</b> An OpenAI key is set, but nothing is sent until you turn AI on.' : '<b>Off.</b> No <code>OPENAI_API_KEY</code> in <code>.env</code>; every feature uses rule-based methods.'}
+      <p>${s.ai ? `<b>On</b>: ${esc(s.provider)} (${esc(s.model)}).` : s.ai_key ? `<b>Off.</b> An ${esc(s.provider)} key is set (model ${esc(s.model)}), but nothing is sent until you turn AI on.` : '<b>Off.</b> No AI key in <code>.env</code>; every feature uses rule-based methods.'}
         With AI on, Research Studio reads your question for meaning: it works out the concepts a paper must cover, adds the field's own terms and synonyms, and decides which concepts are essential. After a search it also rates how relevant each result is to your question, so the best papers rise to the top. You still edit and approve the plan, and nothing is ever removed or accepted for you.</p>
+      ${s.key_note ? `<div class="notice warn">${esc(s.key_note)}</div>` : ''}
       ${aiSteps(s)}
-      <div class="notice"><b>When AI is on, this is sent to OpenAI:</b> your research question and scope, claims, the titles and abstracts of sources and search results, and the passages you linked.
+      <div class="notice"><b>When AI is on, this is sent to ${esc(s.provider || 'the AI provider')}:</b> your research question and scope, claims, the titles and abstracts of sources and search results, and the passages you linked.
         <b>Never sent:</b> whole PDFs, your name, your email address. Every AI call is recorded in the Audit Trail with the model and prompt version, and every AI output is labelled.</div>
       <div class="row" style="margin-top:8px">${s.ai ? '<button class="ghost" data-action="ai-toggle" data-on="0">Turn AI off</button>'
         : s.ai_key ? '<button data-action="ai-toggle" data-on="1">Turn AI on</button>' : ''}
@@ -74,12 +75,12 @@ export const actions = {
     const done = busy(el, 'Testing…');
     try {
       const r = await api.post('/settings/ai/test');
-      toast(`Connected to OpenAI (${r.model}). Now turn AI on.`);
+      toast(`Connected to ${r.provider} (${r.model}). Now turn AI on.`);
     } finally { done(); }
   },
   'ai-toggle': async el => {
     const on = el.dataset.on === '1';
-    if (on && !await ask({ title: 'Turn on AI features?', message: 'Your research question and scope, claims, the titles and abstracts of sources and search results, and linked passages will be sent to OpenAI when you use AI planning, search-result relevance checks, the Red Team, the summary or the research assistant. Whole PDFs, your name and your email are never sent. You can turn this off at any time.', confirm: 'Turn AI on' })) return;
+    if (on && !await ask({ title: 'Turn on AI features?', message: `Your research question and scope, claims, the titles and abstracts of sources and search results, and linked passages will be sent to ${state.status?.provider || 'the AI provider'} when you use AI planning, search-result relevance checks, the Red Team, the summary or the research assistant. Whole PDFs, your name and your email are never sent. You can turn this off at any time.`, confirm: 'Turn AI on' })) return;
     await api.put('/settings/ai', { enabled: on });
     state.status = null;
     toast(on ? 'AI features on. Every call is logged in the Audit Trail.' : 'AI features off. Rule-based methods are used.');
