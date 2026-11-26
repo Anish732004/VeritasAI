@@ -13,7 +13,9 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, StringConstraints
 
-from . import ai, citations, concepts, db, evidence, governance, redteam, scholarly, search, verify, workflow
+from concurrent.futures import ThreadPoolExecutor
+
+from . import ai, assistant, citations, concepts, db, evidence, governance, redteam, refparse, scholarly, search, verify, workflow
 from .config import APP_VERSION, CONTACT_EMAIL, OPENALEX_API_KEY, PROMPT_VERSION, ROOT, STATIC_DIR
 from .db import audit, now
 from .demo import seed_demo
@@ -407,7 +409,14 @@ def _verify_and_store(ref_id: str, project_id: str | None) -> dict:
     if ref.get("demo"):
         raise HTTPException(400, "Demo sources are synthetic and can never be verified.")
     with workflow.agent_run(project_id, "integrity", {"reference_id": ref_id}) as run:
-        result = verify.run(ref)
+        if ref.get("kind") == "webpage":
+            # Crossref and OpenAlex index research works, not web pages: say so instead of calling it "Not found".
+            result = {"status": workflow.WEB_SOURCE, "fields": {}, "searched": [], "record": None, "suggestions": {},
+                      "reason": "Web page: not checked in a scholarly database (Crossref and OpenAlex index research works, "
+                                "not web pages). Open the link to confirm it says what you need; it is cited with the "
+                                "organisation as author and n.d. when there is no date."}
+        else:
+            result = verify.run(ref)
         run["summary"] = result["status"]
     vid = db.new_id()
     with db.db() as con:
@@ -449,6 +458,106 @@ def save_result(pid: str, body: SaveResultIn):
     except Exception as e:  # never block saving on a verification failure
         with db.db() as con:
             return ref_public(con, db.get(con, "refs", data["id"])) | {"verify_error": str(e)}
+
+
+class PasteIn(BaseModel):
+    project_id: str
+    text: _text(10, 50000)
+
+
+def _ref_from_parsed(pid: str, p: dict) -> dict:
+    now_ = now()
+    data = {"id": db.new_id(), "project_id": pid, "title": p["title"][:500] or p["raw"][:200], "authors": p["authors"][:100],
+            "year": p["year"], "doi": p["doi"], "journal": p["journal"][:300], "volume": p["volume"], "issue": p["issue"],
+            "pages": p["pages"], "url": p["url"][:500], "kind": p["kind"], "metadata_source": f"Pasted by student ({p['format']} format)",
+            "notes": "", "created_at": now_, "updated_at": now_}
+    data["original"] = {**{k: data[k] for k in ("title", "authors", "year", "doi", "journal", "volume", "issue", "pages")},
+                        "raw": p["raw"]}
+    return data
+
+
+@api.post("/references/paste")
+def paste_references(body: PasteIn):
+    """Paste a reference list: each entry is read by rules (nothing guessed), saved once, and checked.
+    A second copy of a work already in the project is not saved; it is offered for merging instead."""
+    with db.db() as con:
+        load_project(con, body.project_id)
+        existing = load_refs(con, body.project_id)
+    raws = refparse.split_references(body.text)[:40]
+    if not raws:
+        raise HTTPException(400, "No references found in the pasted text.")
+    results, to_check = [], []
+    for i, raw in enumerate(raws):
+        parsed = refparse.parse_reference(raw)
+        missing = [k for k in ("authors", "year", "title") if not parsed[k]]
+        item = {"index": i, "raw": raw, "format": parsed["format"], "kind": parsed["kind"],
+                "missing": missing, "parsed": {k: parsed[k] for k in ("title", "year", "doi", "journal")}}
+        dup = next((r for r in existing if not r.get("demo") and refparse.same_work(parsed, r)), None)
+        if dup:
+            item["duplicate_of"] = {"id": dup["id"], "title": dup["title"], "year": dup.get("year", "")}
+        else:
+            data = _ref_from_parsed(body.project_id, parsed)
+            with db.db() as con:
+                db.insert(con, "refs", data)
+                audit(con, "Reference pasted", project_id=body.project_id, object_type="reference", object_id=data["id"],
+                      details=raw[:300])
+            existing.append({**data, "verification_status": "Pending review"})
+            item["id"] = data["id"]
+            to_check.append(item)
+        results.append(item)
+
+    def check(item):
+        try:
+            return item, _verify_and_store(item["id"], body.project_id), None
+        except Exception as e:  # never lose a pasted reference because a check failed
+            return item, None, str(e)
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for item, ref, err in ex.map(check, to_check):
+            with db.db() as con:
+                ref = ref or ref_public(con, db.get(con, "refs", item["id"]))
+            item["ref"] = ref
+            if err:
+                item["error"] = err
+            # The same work pasted in two formats may only show up after the check finds its DOI.
+            rec_doi = scholarly.clean_doi(((ref.get("verification") or {}).get("record") or {}).get("doi") or "")
+            twin = next((r for r in existing if r["id"] != item["id"] and not r.get("demo") and rec_doi
+                         and scholarly.clean_doi(r.get("doi") or "") == rec_doi), None)
+            if twin:
+                item["possible_duplicate_of"] = {"id": twin["id"], "title": twin["title"], "year": twin.get("year", "")}
+    return {"count": len(raws), "saved": len(to_check), "duplicates": len(raws) - len(to_check), "results": results}
+
+
+class MergeIn(BaseModel):
+    other_id: str = ""
+    raw: str = Field(default="", max_length=5000)
+
+
+@api.post("/references/{rid}/merge")
+def merge_reference(rid: str, body: MergeIn):
+    """Keep one entry for a work. Either fold another saved entry into this one (its evidence links and notes move
+    here, then it is removed), or record that the same work was pasted again in another format."""
+    with db.db() as con:
+        keep = db.get(con, "refs", rid)
+        if not keep:
+            _404("Reference")
+        notes = keep.get("notes") or ""
+        if body.other_id:
+            other = db.get(con, "refs", body.other_id)
+            if not other or other["project_id"] != keep["project_id"] or other["id"] == rid:
+                raise HTTPException(400, "Choose another reference from the same project to merge.")
+            con.execute("UPDATE evidence_records SET reference_id = ? WHERE reference_id = ?", (rid, other["id"]))
+            raw = ((other.get("original") or {}).get("raw") if isinstance(other.get("original"), dict) else "") or other["title"]
+            notes = (notes + "\n" if notes else "") + f"Merged duplicate: {raw}" + (f"\n{other['notes']}" if other.get("notes") else "")
+            con.execute("DELETE FROM refs WHERE id = ?", (other["id"],))
+        elif body.raw.strip():
+            notes = (notes + "\n" if notes else "") + f"Also pasted in another format (merged, not saved twice): {body.raw.strip()}"
+        else:
+            raise HTTPException(400, "Nothing to merge.")
+        db.update(con, "refs", rid, {"notes": notes[:10000], "updated_at": now()})
+        audit(con, "Duplicate merged", project_id=keep["project_id"], object_type="reference", object_id=rid,
+              details=(body.other_id or body.raw)[:200])
+        return ref_public(con, db.get(con, "refs", rid))
 
 
 class ManualRefIn(BaseModel):
@@ -1065,10 +1174,67 @@ class AskIn(BaseModel):
     question: _text(3, 2000)
 
 
+def _abstract_from_openalex(ref: dict) -> str:
+    """Fetch and store a source's abstract (real text from OpenAlex) so a quote can be checked against it."""
+    if not ref.get("doi"):
+        return ""
+    text = ""
+    for fetch in (scholarly.openalex_by_doi, scholarly.crossref_by_doi):
+        try:
+            text = fetch(ref["doi"]).get("abstract") or ""
+        except (scholarly.NotFound, scholarly.ServiceError):
+            text = ""
+        if text:
+            break
+    if text:
+        with db.db() as con:
+            db.update(con, "refs", ref["id"], {"abstract": text[:20000], "updated_at": now()})
+    return text
+
+
+def _checked_request(pid: str, question: str, refs: list[dict]) -> dict | None:
+    """Requests that must be answered by checks, not by a model: find studies, check a quote, save a note."""
+    kind = assistant.classify(question)
+    if kind == "find":
+        with workflow.agent_run(pid, "discovery", {"request": question[:200]}) as run:
+            out = assistant.handle_find(question)
+            run["summary"] = out["status"]
+    elif kind == "quote":
+        with workflow.agent_run(pid, "evidence", {"request": question[:200]}) as run:
+            out = assistant.handle_quote(question, refs, fetch_abstract=_abstract_from_openalex)
+            run["summary"] = out["status"]
+    elif kind == "note":
+        out = assistant.handle_note(question, refs)
+        if out.get("ref_id"):
+            with db.db() as con:
+                r = db.get(con, "refs", out["ref_id"])
+                notes = ((r.get("notes") or "") + "\n" if r.get("notes") else "") + out["note"]
+                db.update(con, "refs", r["id"], {"notes": notes[:10000], "updated_at": now()})  # content only: no status change
+                audit(con, "Note saved (as text; not followed as an instruction)" if out.get("instruction_ignored") else "Note saved",
+                      project_id=pid, object_type="reference", object_id=r["id"], details=out["note"][:300])
+    else:
+        return None
+    label = {"find": "Checked search (Discovery + Source Integrity agents, no AI)",
+             "quote": "Checked against the source text (Evidence Extraction Agent, no AI)",
+             "note": "Saved as text (notes never change a status)"}[kind]
+    out["label"] = f"{label}: {out['status']}"
+    return out
+
+
 @api.post("/projects/{pid}/ask")
 def ask(pid: str, body: AskIn):
     with db.db() as con:
         b = project_bundle(con, pid)
+    refs_all = [r for r in b["references"] if not r.get("demo")]
+    checked = _checked_request(pid, body.question, refs_all)
+    if checked:
+        with db.db() as con:
+            db.insert(con, "chat", {"id": db.new_id(), "project_id": pid, "question": body.question, "answer": checked["answer"],
+                                    "ai": {"label": checked["label"]}, "created_at": now()})
+            audit(con, "Research assistant request", actor="Research assistant", project_id=pid, object_type="project",
+                  object_id=pid, details=f"{checked['kind']}: {checked['status']} · {body.question[:150]}")
+        return {"answer": checked["answer"], "label": checked["label"], "kind": checked["kind"], "status": checked["status"]}
+    with db.db() as con:
         require_plan(b["project"])
     refs = [r for r in b["references"] if r["decision"] != "Rejected" and not r.get("demo")]
     if ai.available():
@@ -1119,7 +1285,9 @@ def get_bibliography(pid: str, style: str = "APA 7"):
         raise HTTPException(400, str(e))
     for e in entries:
         e["risks"] = citations.risk_review(full[e["reference_id"]], counts.get(e["reference_id"], 0))
-    excluded = [{"id": r["id"], "title": r["title"], "why":
+        e["status"] = full[e["reference_id"]].get("verification_status")
+        e["mark"] = citations.status_mark(full[e["reference_id"]])
+    excluded = [{"id": r["id"], "title": r["title"], "status": r.get("verification_status"), "why":
                  "demo data" if r.get("demo") else "rejected by you" if r["decision"] == "Rejected" else
                  "awaiting your accept/reject decision" if r["decision"] == "Pending" else
                  f"metadata {r['verification_status']} and not reviewed"}
@@ -1127,8 +1295,12 @@ def get_bibliography(pid: str, style: str = "APA 7"):
     excluded += [{"id": r["id"], "title": r["title"],
                   "why": f"duplicate of another saved copy of “{keep['title'][:70]}” ({'same DOI' if r.get('doi') else 'same title'}); listed once"}
                  for r, keep in dropped]
+    marked = [e for e in entries if e["mark"]]
+    summary = (f"Reference check: {len(entries) - len(marked)} verified in Crossref/OpenAlex"
+               + (f"; {len(marked)} cited with a warning ({', '.join(sorted({e['mark'].split(':')[0].strip('[') for e in marked}))})" if marked else "")
+               + (f"; {len(excluded)} left out of this list (see below)" if excluded else "") + ".")
     return {"style": style, "entries": entries, "excluded": excluded, "blockers": b["export_blockers"],
-            "styles": list(citations.STYLES)}
+            "styles": list(citations.STYLES), "check_summary": summary}
 
 
 def project_disclosure(con, pid: str) -> dict:
@@ -1168,7 +1340,8 @@ def export_bibliography(pid: str, style: str = "APA 7", fmt: str = "txt"):
     with db.db() as con:
         p = load_project(con, pid)
         refs = [db.get(con, "refs", e["reference_id"]) for e in entries]
-        note = project_disclosure(con, pid)["text"]
+        note = project_disclosure(con, pid)["text"] + " " + data["check_summary"]
+        left_out = [f"{x['title']}: {x.get('status') or 'Not checked'} ({x['why']})" for x in data["excluded"]]
         db.update(con, "projects", pid, {"exported_at": now()})
         audit(con, "Bibliography exported", actor="Academic Integrity Agent", project_id=pid, object_type="project",
               object_id=pid, details=f"{style}, {fmt}, {len(entries)} references")
@@ -1176,15 +1349,25 @@ def export_bibliography(pid: str, style: str = "APA 7", fmt: str = "txt"):
     if fmt == "html":
         body = ("<!doctype html><meta charset='utf-8'><title>References</title><style>body{font-family:Georgia,serif;"
                 "max-width:760px;margin:40px auto;line-height:1.6}p{padding-left:2em;text-indent:-2em}</style><h1>References</h1>"
-                + "".join(f"<p>{e['html']}</p>" for e in entries)
+                + "".join(f"<p>{e['html']}" + (f" <b style='color:#a83c3a'>{html.escape(e['mark'])}</b>" if e["mark"] else "") + "</p>" for e in entries)
+                + (f"<h2>Not included (shown so warnings are not lost)</h2><ul>{''.join(f'<li>{html.escape(x)}</li>' for x in left_out)}</ul>" if left_out else "")
                 + f"<h2>AI-use disclosure</h2><div>{html.escape(note)}</div>")
         return Response(body, media_type="text/html", headers={"Content-Disposition": f'attachment; filename="{safe_name}.html"'})
     if fmt == "bib":
         header = "".join(f"% {line}\n" for line in textwrap.wrap("AI-use disclosure: " + note, 96))
-        return PlainTextResponse(header + "\n" + citations.bibtex(refs), headers={"Content-Disposition": f'attachment; filename="{safe_name}.bib"'})
+        marks = {r["id"]: citations.status_mark(r) for r in refs}
+        bib = citations.bibtex(refs)
+        for r in refs:
+            if marks[r["id"]]:
+                key = citations.bibtex_keys(refs)[r["id"]]
+                bib = bib.replace(f"{{{key},\n", f"{{{key},\n  note = {{{marks[r['id']]}}},\n", 1)
+        return PlainTextResponse(header + "\n" + bib, headers={"Content-Disposition": f'attachment; filename="{safe_name}.bib"'})
     if fmt == "csl":
-        return JSONResponse([citations.csl_item(r) for r in refs], headers={"Content-Disposition": f'attachment; filename="{safe_name}.json"'})
-    return PlainTextResponse("References\n\n" + "\n\n".join(e["text"] for e in entries) + "\n\n\nAI-use disclosure\n\n" + note + "\n",
+        return JSONResponse([{**citations.csl_item(r), **({"note": citations.status_mark(r)} if citations.status_mark(r) else {})} for r in refs], headers={"Content-Disposition": f'attachment; filename="{safe_name}.json"'})
+    body = "References\n\n" + "\n\n".join(e["text"] + (f"  {e['mark']}" if e["mark"] else "") for e in entries)
+    if left_out:
+        body += "\n\n\nNot included (shown so warnings are not lost)\n\n" + "\n".join("- " + x for x in left_out)
+    return PlainTextResponse(body + "\n\n\nAI-use disclosure\n\n" + note + "\n",
                              headers={"Content-Disposition": f'attachment; filename="{safe_name}.txt"'})
 
 

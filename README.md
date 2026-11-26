@@ -71,6 +71,27 @@ Research Studio searches journal articles **and conference papers** by default (
 
 The tier is a screening aid. It cannot tell you whether a conference reviewed full papers or only abstracts, so check that before relying on a conference paper.
 
+## Phase 2: messy reference lists and assistant requests
+
+**Verification Centre → Check a reference → Paste a list** reads a pasted list (APA, Vancouver or web pages; lettered, numbered or one per line) with rules: a missing detail stays empty and is shown as missing, never guessed. Each reference is saved once and checked against Crossref and OpenAlex. Requests go to **Research Studio → Research assistant**.
+
+| Case | Status shown | Stage and agent (Phase 1 design) |
+|---|---|---|
+| Invented reference | **Not found**, with every place it looked (DOI lookups, then title and author searches); no similar paper substituted | Verify · Source Integrity Agent |
+| Real DOI, wrong paper | **Mismatch**, the DOI's real record beside what was pasted | Verify · Source Integrity Agent |
+| Small error (e.g. year) | **Needs fix**: "yours 1981, record 1979"; *Use database values* or *Keep mine (give reason)* | Verify · Source Integrity Agent, student decides |
+| Retracted paper | **RETRACTED** (OpenAlex `is_retracted`, Crossref retraction notice); can only be cited with a reason and stays marked in every export | Verify · Source Integrity Agent; Approve · checkpoint |
+| Duplicate in another format | Not saved twice; **Merge into it (keep one)** | Verify · duplicate check, Approve · student merges |
+| Study that does not exist (request 1) | **Not found**, plus related real papers, each checked and labelled, and what was searched | Discover · Discovery Agent + Source Integrity Agent |
+| No DOI (B1) | Found by title and authors; never called fake for lacking a DOI | Verify · Source Integrity Agent |
+| Web page (B2) | **Web source (not checked)**; APA with the organisation as author and n.d. | Verify · Source Integrity Agent; Cite · Academic Integrity Agent |
+| Quote not in source (B3, request 2) | *Not found in source* or *Could not check* (no text available); never confirmed | Evidence · Evidence Extraction Agent |
+| Database down (B4) | **Could not check, try again**; never Verified without a check | Verify · Source Integrity Agent |
+| Hidden instruction (B5, request 3) | Saved as a plain-text note; the instruction is reported and not followed; no status changes | Guardrail: source text and notes are content, not commands |
+| Warnings travel (constraint 4) | Every export marks retracted, unverified and web sources, lists what was left out and why, and the AI-use statement gives the counts | Cite · Academic Integrity Agent |
+
+No rule refers to a particular paper: retraction comes from the databases' flags, duplicates from DOI or title, year and first author, and the assistant's answers come from searches and stored text, not from the AI. `tests/test_phase2.py` checks each case with made-up references.
+
 ## Backup and restore
 
 **Settings → Backups → Download backup** saves every project, source, claim, evidence link, decision and the audit trail as one JSON file. **Settings → Restore from a backup** adds them back (on a new computer, or after a reinstall):

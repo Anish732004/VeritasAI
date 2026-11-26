@@ -176,9 +176,10 @@ export async function render() {
         <span class="small muted">${saved.length} source(s) saved in this project.</span>
         ${saved.length ? '<button class="ghost small" data-action="go" data-page="verification">Review verification →</button>' : ''}</div>
       <div id="results" style="margin-top:14px">${resultsBlock()}</div>`, '', 'Candidate sources only. A search result is not evidence for any claim, and saving runs a metadata check automatically.')}
-    ${panel('04 · Research assistant', `<form data-submit="ask" class="row"><label for="askq" class="sr-only">Question</label><input id="askq" name="question" style="flex:1" required minlength="3" placeholder="Ask about gaps, methods or limitations in your saved sources" ${p.plan_approved_at ? '' : 'disabled'}><button type="submit" ${p.plan_approved_at ? '' : 'disabled'}>Ask</button></form>
+    ${panel('04 · Research assistant', `<form data-submit="ask" class="row"><label for="askq" class="sr-only">Question</label><input id="askq" name="question" style="flex:1" required minlength="3" placeholder="Find studies on…, check a quote…, save a note on…, or ask about your sources"><button type="submit">Ask</button></form>
+      <p class="small muted" style="margin-top:6px">Requests to find studies, check a quote or save a note are answered by checks against Crossref, OpenAlex and your stored source text, never by the AI's memory. Notes are saved as text and never change a status.</p>
       <div style="margin-top:10px">${chat.map(c => `<div class="card"><h3>${esc(c.question)}</h3><p class="small"><span class="badge ${c.ai?.model ? 'info' : ''}">${esc(c.ai?.label || '')}</span></p><p style="white-space:pre-wrap;margin-top:6px">${esc(c.answer)}</p></div>`).join('')}</div>`,
-      '', 'Answers are reasoning to check, never evidence. Each one is recorded in the audit trail with the model used.')}`;
+      '', 'Checked answers say Found, Not found or Could not check. Other answers are reasoning to check, never evidence. Each one is recorded in the audit trail.')}`;
 }
 
 function collectPlan() {

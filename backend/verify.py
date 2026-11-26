@@ -13,6 +13,10 @@ from .text import fold, norm_key, parse_person_name, similarity
 FIELDS = ("title", "authors", "year", "doi", "journal")
 STATUS_VERIFIED, STATUS_PARTIAL, STATUS_MISMATCH = "Verified match", "Partial match", "Mismatch"
 STATUS_NOT_FOUND, STATUS_PENDING = "Not found", "Pending review"
+STATUS_RETRACTED, STATUS_UNCHECKED = "Retracted", "Could not check"
+# Details that can be wrong on a real paper ("Needs fix"); a wrong title, author list or DOI means a different paper.
+DETAIL_FIELDS = {"year", "journal"}
+_RETRACTED_PREFIX = re.compile(r"^\s*(retracted|withdrawn|retraction)\s*(article)?\s*[:\-–]\s*", re.I)
 
 
 def _parts(author) -> tuple[str, str]:
@@ -82,11 +86,12 @@ def compare_title(supplied: str, database: str) -> dict:
         return _field("missing_supplied", supplied, database, "Your reference has no title.")
     if not database:
         return _field("missing_database", supplied, database, "The database record has no title.")
-    a, b = _title_tokens(supplied), _title_tokens(database)
+    # A retracted paper's record title often starts "RETRACTED:"; that label is not part of the title.
+    a, b = _title_tokens(supplied), _title_tokens(_RETRACTED_PREFIX.sub("", database))
     if a == b:
         return _field("match", supplied, database, "Same words (case, punctuation and markup ignored).")
     main_a = _title_tokens(fold(supplied).split(":")[0])
-    main_b = _title_tokens(fold(database).split(":")[0])
+    main_b = _title_tokens(fold(_RETRACTED_PREFIX.sub("", database)).split(":")[0])
     changes, ratio = _word_changes(a, b)
     detail = "; ".join(changes[:4]) + (f"; and {len(changes) - 4} more" if len(changes) > 4 else "")
     if len(main_a) >= 3 and main_a == main_b:
@@ -206,18 +211,26 @@ def compare(ref: dict, rec: dict) -> dict:
 
 
 def overall(fields: dict) -> tuple[str, str]:
+    """Verified, Needs fix (stored as "Partial match": the paper is real but a detail differs) or Mismatch
+    (the title, authors or DOI belong to a different paper)."""
     mism = [k for k, v in fields.items() if v["status"] == "mismatch"]
     part = [k for k, v in fields.items() if v["status"] == "partial"]
     missing = [k for k, v in fields.items() if v["status"] in ("missing_supplied", "missing_database")]
-    if mism:
-        return STATUS_MISMATCH, "Conflicting fields: " + ", ".join(mism) + ". Values were not changed; review them side by side."
-    if part or missing:
+    identity = [k for k in mism if k not in DETAIL_FIELDS]
+    if identity:
+        return STATUS_MISMATCH, ("Different paper: " + ", ".join(identity) + " do not match what this DOI or record points to. "
+                                 "The record is shown next to what you entered; nothing was changed.")
+    if mism or part or missing:
         bits = []
-        if part:
-            bits.append("needs review: " + ", ".join(part))
+        wrong = mism + [k for k in part if k in DETAIL_FIELDS]
+        if wrong:
+            bits.append("wrong detail: " + ", ".join(
+                f"{k} (yours {fields[k]['supplied'] or '—'}, record {fields[k]['database'] or '—'})" for k in wrong))
+        if [k for k in part if k not in DETAIL_FIELDS]:
+            bits.append("needs review: " + ", ".join(k for k in part if k not in DETAIL_FIELDS))
         if missing:
             bits.append("missing: " + ", ".join(missing))
-        return STATUS_PARTIAL, "Some fields match; " + "; ".join(bits) + "."
+        return STATUS_PARTIAL, "The paper exists, but " + "; ".join(bits) + ". Accept the database's value or keep yours."
     return STATUS_VERIFIED, "Title, authors, year, DOI and journal agree with the database record."
 
 
@@ -227,10 +240,41 @@ def _merge_years(primary: dict, other: dict | None) -> dict:
     return primary
 
 
+def _best_candidate(cands: list[dict], ref: dict) -> dict | None:
+    """The search hit that is the same work: close title first, then matching year and first author."""
+    def fit(c):
+        sim = similarity(c["title"], ref.get("title", ""))
+        year_ok = str(ref.get("year") or "") in ([c.get("year")] + (c.get("years") or []))
+        ra, ca = [_parts(a)[1] for a in ref.get("authors") or []], [_parts(a)[1] for a in c.get("authors") or []]
+        author_ok = bool(ra and ca and norm_key(ra[0]) in {norm_key(x) for x in ca})
+        return sim + 0.15 * year_ok + 0.15 * author_ok, sim
+    scored = [(fit(c), c) for c in cands]
+    scored = [x for x in scored if x[0][1] >= 0.80]
+    return max(scored, key=lambda x: x[0][0])[1] if scored else None
+
+
+def _title_search(ref: dict, searched: list, errors: list, records: dict) -> None:
+    if not (ref.get("title") or "").strip():
+        return
+    query = " ".join(filter(None, [ref.get("title", ""), author_text(ref.get("authors"))[:120], str(ref.get("year") or "")]))
+    for name, fn, arg in (("Crossref", scholarly.crossref_bibliographic, query),
+                          ("OpenAlex", scholarly.openalex_title_search, ref.get("title", ""))):
+        searched.append(f"{name} (title and author search)")
+        try:
+            cands = fn(arg)
+        except scholarly.ServiceError as e:
+            errors.append(str(e))
+            continue
+        best = _best_candidate(cands, ref)
+        if best:
+            records[name] = best
+
+
 def run(ref: dict) -> dict:
     """Look the reference up and return a verification result (not yet saved)."""
     searched, errors, records = [], [], {}
     doi = scholarly.clean_doi(ref.get("doi", ""))
+    doi_unknown = False
     if doi:
         for name, fn in (("Crossref", scholarly.crossref_by_doi), ("OpenAlex", scholarly.openalex_by_doi)):
             searched.append(f"{name} (DOI lookup)")
@@ -240,34 +284,47 @@ def run(ref: dict) -> dict:
                 pass
             except scholarly.ServiceError as e:
                 errors.append(str(e))
+        if not records and not errors:
+            # The DOI does not exist. Look for the paper by title and authors too, but never swap it in silently:
+            # a match is shown as a suggested fix the student accepts or rejects.
+            doi_unknown = True
+            _title_search(ref, searched, errors, records)
     else:
-        query = " ".join(filter(None, [ref.get("title", ""), author_text(ref.get("authors"))[:120], str(ref.get("year") or "")]))
-        for name, fn, arg in (("Crossref", scholarly.crossref_bibliographic, query),
-                              ("OpenAlex", scholarly.openalex_title_search, ref.get("title", ""))):
-            searched.append(f"{name} (title search)")
-            try:
-                cands = fn(arg)
-            except scholarly.ServiceError as e:
-                errors.append(str(e))
-                continue
-            best = max(cands, key=lambda c: similarity(c["title"], ref.get("title", "")), default=None)
-            if best and similarity(best["title"], ref.get("title", "")) >= 0.80:
-                records[name] = best
+        _title_search(ref, searched, errors, records)
 
     if not records:
         if errors:
-            return {"status": STATUS_PENDING, "reason": "Lookup incomplete: " + "; ".join(errors) + ". Retry later or review manually.",
+            return {"status": STATUS_UNCHECKED, "reason": "Could not check, try again: " + "; ".join(errors)
+                    + ". Nothing was verified, because no check ran.",
                     "fields": {}, "searched": searched, "record": None, "suggestions": {}}
-        where = " and ".join(s.split(" (")[0] for s in searched)
+        where = " and ".join(dict.fromkeys(s.split(" (")[0] for s in searched)) or "no database (no DOI or title to search with)"
+        how = "; ".join(searched)
         return {"status": STATUS_NOT_FOUND,
-                "reason": f"No matching record in the databases searched ({where}). This does not prove the work does not exist; check the details or add a DOI.",
+                "reason": f"Not found. Looked in {where} ({how}). No record matches this reference, so it is not verified "
+                          "and no similar paper was substituted.",
                 "fields": {}, "searched": searched, "record": None, "suggestions": {}}
 
     primary_name = "Crossref" if "Crossref" in records else "OpenAlex"
     other_name = "OpenAlex" if primary_name == "Crossref" else "Crossref"
     primary = _merge_years(records[primary_name], records.get(other_name))
-    fields = compare(ref, primary)
+    compared = {**ref, "doi": ""} if doi_unknown else ref
+    fields = compare(compared, primary)
+    if doi_unknown:
+        fields["doi"] = _field("mismatch", doi, primary.get("doi", ""), "The DOI you gave does not exist in Crossref or "
+                               "OpenAlex; the paper was found by title and authors instead.")
+        fields["doi"]["status"] = "partial"
     status, reason = overall(fields)
+    if doi_unknown and status == STATUS_VERIFIED:
+        status, reason = STATUS_PARTIAL, "The paper exists, but the DOI you gave does not. Accept the correct DOI or keep yours."
+    retracted = [n for n, r in records.items() if r.get("retracted")]
+    if retracted and status in (STATUS_VERIFIED, STATUS_PARTIAL):
+        notice = next((records[n].get("retraction_notice") for n in retracted if records[n].get("retraction_notice")), "")
+        reason = ("RETRACTED: this paper has been withdrawn (flagged by " + " and ".join(retracted)
+                  + (f"; retraction notice doi:{notice}" if notice else "") + "). Do not rely on it; if you must cite it, "
+                  "cite it as retracted. " + ("Its details match your reference." if status == STATUS_VERIFIED else reason))
+        status = STATUS_RETRACTED
+    elif retracted:
+        reason += " Note: the paper this DOI points to has been retracted."
 
     notes = []
     if len(records) == 2:
@@ -284,6 +341,8 @@ def run(ref: dict) -> dict:
 
     suggestions = {k: v["database"] for k, v in fields.items()
                    if v["status"] in ("mismatch", "partial", "missing_supplied") and v["database"]}
+    if doi_unknown and primary.get("doi"):
+        suggestions["doi"] = primary["doi"]
     if "authors" in suggestions:
         suggestions["authors"] = primary.get("authors")
     if "year" in suggestions:
@@ -292,6 +351,7 @@ def run(ref: dict) -> dict:
         if primary.get(extra) and not ref.get(extra):
             suggestions[extra] = primary[extra]
     return {"status": status, "reason": reason, "fields": fields, "searched": searched,
-            "record": {"provider": primary_name, **{k: primary.get(k) for k in
-                       ("title", "authors", "year", "years", "doi", "journal", "issn", "volume", "issue", "pages", "url", "external_id", "kind")}},
+            "record": {"provider": primary_name, "retracted": bool(retracted), **{k: primary.get(k) for k in
+                       ("title", "authors", "year", "years", "doi", "journal", "issn", "volume", "issue", "pages", "url", "external_id", "kind",
+                        "retraction_notice")}},
             "suggestions": suggestions}

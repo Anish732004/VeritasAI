@@ -29,7 +29,7 @@ export function resolveButtons(r) {
   if (r.demo) return '<span class="small muted">Demo sources cannot be verified.</span>';
   return `<button class="ghost small" data-action="ref-verify" data-id="${esc(r.id)}">↻ Re-check</button>
     ${sugg && r.verification_status !== 'Verified match' ? `<button class="soft small" data-action="ref-accept-db" data-id="${esc(r.id)}" title="Copy ${esc(Object.keys(v.suggestions).join(', '))} from the record">Use database values</button>` : ''}
-    ${r.verification_status !== 'Verified match' && !r.override_reason && v ? `<button class="ghost small" data-action="ref-keep-mine" data-id="${esc(r.id)}">Keep mine (give reason)</button>` : ''}`;
+    ${r.verification_status !== 'Verified match' && r.verification_status !== 'Web source' && !r.override_reason && v ? `<button class="ghost small" data-action="ref-keep-mine" data-id="${esc(r.id)}" data-retracted="${r.verification_status === 'Retracted' ? 1 : ''}">${r.verification_status === 'Retracted' ? 'Cite anyway (give reason)' : 'Keep mine (give reason)'}</button>` : ''}`;
 }
 
 export function decisionButtons(r, kind = 'ref') {
@@ -113,7 +113,10 @@ export const actions = {
     await refreshAfterChange(el.dataset.id);
   },
   'ref-keep-mine': async el => {
-    const reason = await ask({ title: 'Keep your own values', message: 'Why are your values correct? For example: “checked the publisher page; the record lists the online-first year”. This is saved in the audit trail.', input: true, required: true, confirm: 'Keep my values' });
+    const retracted = el.dataset.retracted === '1';
+    const reason = await ask(retracted
+      ? { title: '⚠ Cite a RETRACTED paper?', message: 'This paper has been withdrawn. Cite it only to discuss the retraction itself. Why are you citing it? It stays marked RETRACTED in every export.', input: true, required: true, confirm: 'Cite as retracted', danger: true }
+      : { title: 'Keep your own values', message: 'Why are your values correct? For example: “checked the publisher page; the record lists the online-first year”. This is saved in the audit trail.', input: true, required: true, confirm: 'Keep my values' });
     if (!reason) return;
     await api.post(`/references/${el.dataset.id}/resolve`, { action: 'keep_mine', reason });
     toast('Your values were kept and the reason recorded.');
@@ -175,6 +178,35 @@ export const actions = {
     await refreshAfterChange(form.dataset.id);
   },
   'add-reference': () => openManual(),
+  'manual-tab': el => openManual(el.dataset.tab),
+  'paste-refs': async (form, data) => {
+    const box = document.getElementById('pasteResults');
+    box.innerHTML = '<div class="loading" role="status">Reading and checking each reference against Crossref and OpenAlex…</div>';
+    const r = await api.post('/references/paste', { project_id: data.project_id || state.projectId, text: data.text });
+    const row = (it, n) => {
+      const label = String.fromCharCode(65 + n);
+      if (it.duplicate_of) {
+        return `<div class="lineitem"><div><h3>${label}. ${esc(it.parsed.title || it.raw.slice(0, 80))}</h3>
+          <p>${badge('Partial match', 'Duplicate')} Same work as “${esc(it.duplicate_of.title)}” (${esc(it.duplicate_of.year || 'n.d.')}), pasted in another format. Not saved twice.</p></div>
+          <button class="small" data-action="merge-dup" data-keep="${esc(it.duplicate_of.id)}" data-raw="${esc(it.raw)}">Merge into it (keep one)</button></div>`;
+      }
+      const ref = it.ref || {};
+      const st = ref.verification_status || 'Pending review';
+      return `<div class="lineitem"><div><h3>${label}. ${esc(ref.title || it.raw.slice(0, 80))}</h3>
+        <p>${badge(st)} <span class="small">${esc((ref.verification && ref.verification.reason) || it.error || '')}</span></p>
+        ${it.missing.length ? `<p class="small muted">Not in what you pasted: ${esc(it.missing.join(', '))} (left empty, not guessed).</p>` : ''}
+        ${it.possible_duplicate_of ? `<p class="small">Same DOI as “${esc(it.possible_duplicate_of.title)}”. <button class="small" data-action="merge-dup" data-keep="${esc(it.possible_duplicate_of.id)}" data-other="${esc(ref.id)}">Merge into it (keep one)</button></p>` : ''}</div>
+        <button class="ghost small" data-action="open-source" data-id="${esc(ref.id)}">Review</button></div>`;
+    };
+    box.innerHTML = `<div class="notice">${r.count} reference(s) read · ${r.saved} saved and checked · ${r.duplicates} duplicate(s) not saved. Review each one in the Verification Centre: you accept or reject every fix.</div>${r.results.map(row).join('')}`;
+    await render();
+  },
+  'merge-dup': async el => {
+    await api.post(`/references/${el.dataset.keep}/merge`, el.dataset.other ? { other_id: el.dataset.other } : { raw: el.dataset.raw });
+    el.outerHTML = '<span class="badge good">✓ Merged: one entry kept</span>';
+    toast('Merged. The paper is kept once.');
+    await render();
+  },
   'manual-ref': async (form, data) => {
     const r = await api.post('/references', { ...data, project_id: data.project_id || state.projectId });
     closeModal();
@@ -184,8 +216,18 @@ export const actions = {
   },
 };
 
-export function openManual() {
-  openModal(`<h2 id="modalTitle">Check a reference</h2>
+export function openManual(tab = 'paste') {
+  const projectSel = id => `<div class="field"><label for="${id}">Project</label><select id="${id}" name="project_id">${state.projects.map(p => `<option value="${esc(p.id)}" ${p.id === state.projectId ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</select></div>`;
+  const tabs = `<div class="row" role="tablist" style="margin-top:10px"><button class="${tab === 'paste' ? '' : 'ghost'} small" role="tab" aria-selected="${tab === 'paste'}" data-action="manual-tab" data-tab="paste">Paste a list</button><button class="${tab === 'one' ? '' : 'ghost'} small" role="tab" aria-selected="${tab === 'one'}" data-action="manual-tab" data-tab="one">One reference</button></div>`;
+  if (tab === 'paste') {
+    openModal(`<h2 id="modalTitle">Check references</h2>${tabs}
+      <p class="small" style="margin-top:8px">Paste a reference list exactly as you have it (APA, Vancouver or web pages; numbered, lettered or one per line). Each one is read by rules (nothing is guessed), saved once and checked against Crossref and OpenAlex. Nothing is corrected silently: you accept or reject every fix.</p>
+      <form data-submit="paste-refs" class="stack" style="margin-top:10px">${projectSel('pp_project')}
+        <div class="field"><label for="pp_text">References</label><textarea id="pp_text" name="text" required minlength="10" style="min-height:180px" placeholder="Sample format: Author, A. A., &amp; Author, B. (Year). Title of the article. Journal Name, 12(3), 45–67. https://doi.org/10.xxxx/xxxxx"></textarea></div>
+        <button type="submit">Add and check all</button></form><div id="pasteResults"></div>`);
+    return;
+  }
+  openModal(`<h2 id="modalTitle">Check a reference</h2>${tabs}
     <p class="small">Enter the details as you have them (for example from an AI answer or a reading list). VERITAS compares them with Crossref and OpenAlex and shows any differences. Nothing is corrected silently.</p>
     <form data-submit="manual-ref" class="stack" style="margin-top:12px">
       <div class="field"><label for="m_project">Project</label><select id="m_project" name="project_id">${state.projects.map(p => `<option value="${esc(p.id)}" ${p.id === state.projectId ? 'selected' : ''}>${esc(p.title)}</option>`).join('')}</select></div>

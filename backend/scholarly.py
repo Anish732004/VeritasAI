@@ -139,6 +139,7 @@ def from_openalex(w: dict) -> dict:
         "kind": work_kind(w.get("type") or "", src.get("type") or ""),
         "language": w.get("language") or "",
         "is_retracted": bool(w.get("is_retracted")),
+        "retracted": bool(w.get("is_retracted")),
         "cited_by_count": w.get("cited_by_count") or 0,
         "relevance_score": w.get("relevance_score"),
         "oa_url": oa.get("pdf_url") or oa.get("landing_page_url") or "",
@@ -180,6 +181,11 @@ def from_crossref(m: dict) -> dict:
         "abstract": strip_tags(m.get("abstract") or ""),
         "type": m.get("type", ""),
         "kind": work_kind(m.get("type", "")),
+        # Crossref links a retraction notice to the paper it retracts.
+        "retracted": any((u.get("type") or "").lower() in ("retraction", "removal", "withdrawal")
+                         for u in m.get("updated-by") or []),
+        "retraction_notice": next((u.get("DOI") for u in m.get("updated-by") or []
+                                   if (u.get("type") or "").lower() in ("retraction", "removal", "withdrawal")), ""),
     }
 
 

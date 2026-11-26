@@ -85,6 +85,20 @@ def bibtex_keys(refs: list[dict]) -> dict[str, str]:
     return keys
 
 
+def status_mark(ref: dict) -> str:
+    """The warning that travels with a cited reference into every export ("" when it is verified)."""
+    status = ref.get("verification_status") or "Pending review"
+    reason = (ref.get("override_reason") or "").strip()
+    if status == "Verified match":
+        return ""
+    if status == "Web source":
+        return "[Web source: not checked in a scholarly database]"
+    if status == "Retracted":
+        return "[RETRACTED: this paper has been withdrawn" + (f"; cited deliberately: {reason}]" if reason else "]")
+    label = {"Partial match": "Needs fix", "Pending review": "Not checked"}.get(status, status)
+    return f"[NOT VERIFIED: {label}" + (f"; kept as entered: {reason}]" if reason else "]")
+
+
 def csl_item(ref: dict) -> dict:
     authors = []
     for a in ref.get("authors") or []:
@@ -93,6 +107,14 @@ def csl_item(ref: dict) -> dict:
         elif a.get("name"):
             authors.append({"literal": a["name"]})
     conference = ref.get("kind") == "conference-paper"
+    if ref.get("kind") == "webpage":
+        # APA 7 web page: organisation as author, "n.d." when undated (citeproc writes n.d. for a missing date).
+        item = {"id": ref["id"], "type": "webpage", "title": strip_tags(ref.get("title", "")), "URL": ref.get("url", ""),
+                "author": [{"literal": a.get("family") or a.get("name", "")} for a in ref.get("authors") or [] if a.get("family") or a.get("name")]}
+        y = str(ref.get("year") or "")
+        if y.isdigit():
+            item["issued"] = {"date-parts": [[int(y)]]}
+        return {k: v for k, v in item.items() if v not in ("", None, [])}
     item = {"id": ref["id"], "type": "paper-conference" if conference else "article-journal", "title": strip_tags(ref.get("title", "")),
             "author": authors, "container-title": strip_tags(ref.get("journal", "")), "volume": ref.get("volume", ""),
             "issue": ref.get("issue", ""), "page": ref.get("pages", ""), "DOI": ref.get("doi", "")}
@@ -150,7 +172,7 @@ def bibliography(refs: list[dict], style: str) -> list[dict]:
     # citeproc sorts the bibliography; keep its order and map entries back by position of keys.
     keys = [str(k) for k in bib.keys]
     for key, entry in zip(keys, bib.bibliography()):
-        h = tidy_punctuation(safe_html(str(entry)), style)
+        h = tidy_punctuation(safe_html(str(entry)), style).replace("Retrieved http", "http")
         out.append({"reference_id": key, "html": h, "text": html.unescape(re.sub(r"<[^>]+>", "", h)),
                     "in_text": in_text(by_id[key], style, suffix.get(key, ""))})
     return out

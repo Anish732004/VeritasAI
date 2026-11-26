@@ -4,12 +4,13 @@ import { render as renderApp, state } from '../main.js';
 import { nextAction, projectHeader } from './common.js';
 import { compareTable, decisionButtons, resolveButtons } from './source.js';
 
-const STATUSES = ['Verified match', 'Partial match', 'Mismatch', 'Not found', 'Pending review'];
-const PRIORITY = { 'Pending review': 0, 'Mismatch': 1, 'Not found': 2, 'Partial match': 3, 'Verified match': 4 };
+const STATUSES = ['Verified match', 'Partial match', 'Mismatch', 'Retracted', 'Not found', 'Could not check', 'Web source', 'Pending review'];
+const PRIORITY = { 'Retracted': 0, 'Mismatch': 1, 'Not found': 2, 'Partial match': 3, 'Could not check': 4, 'Pending review': 5, 'Web source': 6, 'Verified match': 7 };
 let open = new Set();
 
 function needsAttention(r) {
   if (r.decision === 'Rejected' || r.demo) return false;
+  if (r.verification_status === 'Web source') return r.decision !== 'Accepted';
   return r.verification_status !== 'Verified match' && !r.override_reason;
 }
 
@@ -22,7 +23,9 @@ function row(r) {
         <h3><button class="link" data-action="open-source" data-id="${esc(r.id)}">${esc(r.title)}</button></h3>
         <p class="meta">${esc(authorsText(r.authors, 3))} · ${esc(r.year || 'n.d.')} · ${esc(r.journal || 'No venue')} · <span class="mono">${esc(r.doi || 'no DOI')}</span></p>
         <div class="row" style="margin-top:8px">${badge(r.verification_status)} ${badge(r.decision)} ${r.demo ? badge('Demo only') : ''} ${r.override_reason ? '<span class="badge warn">Kept own values</span>' : ''}</div>
+        ${r.verification_status === 'Retracted' ? `<div class="notice bad" role="alert"><b>⚠ RETRACTED.</b> This paper has been withdrawn. Do not rely on it; it can only be cited deliberately, with a reason, and stays marked RETRACTED in every export.</div>` : ''}
         <p class="why-status">${esc(v ? v.reason : r.demo ? 'Synthetic demo source: never verified.' : 'Not checked yet.')}</p>
+        ${r.notes ? `<p class="small muted">Note (stored as text, never followed as an instruction): ${esc(r.notes.slice(0, 200))}</p>` : ''}
         ${r.override_reason ? `<p class="small">Your reason: “${esc(r.override_reason)}”</p>` : ''}
       </div>
       <div class="row end cardactions" style="max-width:340px">${v?.fields && Object.keys(v.fields).length ? `<button class="ghost small" data-action="ver-toggle" data-id="${esc(r.id)}" aria-expanded="${expanded}">${expanded ? 'Hide' : 'Compare fields'}</button>` : ''}${resolveButtons(r)}</div>

@@ -33,9 +33,10 @@ export async function render() {
       ${style !== 'APA 7' ? '<p class="small muted">APA 7 is the reference style the project is tested against. MLA, Harvard and Chicago come from the same CSL engine; check given-name formatting by hand.</p>' : ''}
       ${bib.entries.map((e, i) => `<div class="bibentry"><p class="entry">${e.html}</p>
         <div class="row" style="margin-top:6px"><span class="small muted">In-text: ${esc(e.in_text)}</span><button class="ghost small" data-action="cite-copy" data-i="${i}">Copy</button></div>
+        ${e.mark ? `<div class="notice ${e.status === 'Retracted' ? 'bad' : 'warn'}" style="margin:6px 0">${esc(e.mark)} <span class="small">This mark is included in every export.</span></div>` : ''}
         ${e.risks.length ? `<div class="risk">${e.risks.map(r => `<div>${badge(r.level, `${r.level} risk`)} ${esc(r.text)}</div>`).join('')}</div>` : `<div class="risk">${badge('Verified match', 'No risk flags')}</div>`}</div>`).join('')
         || empty('No citable sources yet. A source appears here once you accept it and its metadata is verified (or reviewed with a reason).')}
-      ${bib.excluded.length ? `<details style="margin-top:10px"><summary>${bib.excluded.length} source(s) left out, and why</summary>${bib.excluded.map(x => `<p class="small">• ${esc(x.title)}: ${esc(x.why)}</p>`).join('')}</details>` : ''}`,
+      ${bib.excluded.length ? `<details style="margin-top:10px"><summary>${bib.excluded.length} source(s) left out, and why</summary>${bib.excluded.map(x => `<p class="small">• ${badge(x.status || 'Pending review')} ${esc(x.title)}: ${esc(x.why)}</p>`).join('')}</details>` : ''}`,
       '', 'Citation Risk Review flags items that need a human look. It is not a probability that a reference is true.')
     + panel('AI-use disclosure', `<p class="small">${disc.saved ? 'Your edited wording.' : 'Built from this project\'s audit trail: what was searched, verified and checked, and every recorded AI call.'} It is added to every exported reference list.</p>
       <label for="disclosure" class="sr-only">AI-use disclosure</label><textarea id="disclosure" rows="6">${esc(disc.text)}</textarea>

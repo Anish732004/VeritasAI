@@ -21,7 +21,8 @@ export function authorsInput(authors) {
 // Every status maps to a colour, an icon and its text label, so meaning never relies on colour alone.
 const BADGES = {
   'Verified match': ['good', '✓'], 'Partial match': ['warn', '◐'], 'Mismatch': ['bad', '✕'],
-  'Not found': ['bad', '?'], 'Pending review': ['warn', '…'],
+  'Not found': ['bad', '?'], 'Pending review': ['warn', '…'], 'Retracted': ['bad', '⚠'], 'Could not check': ['warn', '↻'],
+  'Web source': ['info', '⌁'],
   'Source-supported': ['good', '✓'], 'Reported, not independently checked': ['warn', '◐'],
   'AI interpretation': ['info', '✧'], 'Contradicted / qualified': ['bad', '⇄'], 'Demo only': ['demo', '◇'],
   'Accepted': ['good', '✓'], 'Rejected': ['bad', '✕'], 'Pending': ['', '○'],
@@ -30,6 +31,8 @@ const BADGES = {
   high: ['bad', '!'], medium: ['warn', '!'], low: ['', 'i'],
 };
 const LABELS = {
+  'Verified match': 'Verified', 'Partial match': 'Needs fix', 'Pending review': 'Not checked', 'Retracted': 'RETRACTED',
+  'Could not check': 'Could not check, try again', 'Web source': 'Web source (not checked)',
   exact: 'Exact match', near: 'Near match', not_located: 'Not located in text', no_text: 'No source text to check',
   supports: 'Supports', qualifies: 'Qualifies', challenges: 'Challenges', unclear: 'Unclear',
 };

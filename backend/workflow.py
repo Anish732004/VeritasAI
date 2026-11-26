@@ -51,9 +51,16 @@ def agent_run(project_id: str | None, agent: str, payload: dict):
         db.update(con, "agent_runs", run_id, {"status": "done", "output_summary": box["summary"][:500], "finished_at": db.now()})
 
 
+WEB_SOURCE = "Web source"
+
+
 def citable(ref: dict) -> bool:
+    """Accepted by the student and either verified, or knowingly kept with a written reason (shown in exports).
+    A web page is citable once accepted, but stays marked as not checked in a scholarly database."""
     if ref.get("demo") or ref.get("decision") != "Accepted":
         return False
+    if ref.get("verification_status") == WEB_SOURCE:
+        return True
     return ref.get("verification_status") == VERIFIED_OK or bool(ref.get("override_reason"))
 
 
@@ -62,6 +69,8 @@ def verification_reviewed(ref: dict) -> bool:
         return True
     if not ref.get("verification_id"):
         return False
+    if ref.get("verification_status") == WEB_SOURCE:
+        return True
     return ref.get("verification_status") == VERIFIED_OK or bool(ref.get("override_reason"))
 
 

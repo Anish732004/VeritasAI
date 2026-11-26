@@ -41,8 +41,17 @@ def test_year_off_by_one_is_partial_not_mismatch():
     assert verify.overall(fields)[0] == verify.STATUS_PARTIAL
 
 
-def test_wrong_year_is_mismatch():
-    assert verify.overall(verify.compare(ref(year="2015"), HUNG))[0] == verify.STATUS_MISMATCH
+def test_wrong_year_on_a_real_paper_needs_a_fix_not_a_mismatch():
+    """Phase 2 requirement 3: one wrong detail on a real paper is a small error the student can fix."""
+    fields = verify.compare(ref(year="2015"), HUNG)
+    status, reason = verify.overall(fields)
+    assert fields["year"]["status"] == "mismatch" and status == verify.STATUS_PARTIAL
+    assert "yours 2015" in reason and "2021" in reason
+
+
+def test_wrong_authors_on_a_real_doi_is_a_mismatch():
+    status, reason = verify.overall(verify.compare(ref(authors=[{"given": "G", "family": "Hinton"}]), HUNG))
+    assert status == verify.STATUS_MISMATCH and "authors" in reason
 
 
 def test_author_initials_and_hyphens_do_not_cause_mismatch():
