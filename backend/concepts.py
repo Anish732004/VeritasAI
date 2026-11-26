@@ -1,67 +1,26 @@
 """Turn a research question into an editable concept map (the plan's search terms).
 
 A language model can propose the groups when one is configured. The rule-based path
-below always works and is what the tests exercise: it removes question words, keeps
-2-3 word phrases, expands a small set of well-known synonyms and spelling variants, and
-marks the first topic groups as required.
+below always works, offline, and is what the tests exercise:
+
+ 1. split the question into topic phrases: question words, filler, evaluative words and the
+    verbs that join two ideas ("microfinance REDUCE poverty") end a phrase;
+ 2. keep compounds whose last word only makes sense with the one before it ("patient
+    outcomes", "firm value") and split ones that hold two ideas ("electric vehicle adoption",
+    "grading student essays", "employee pro-environmental behaviour");
+ 3. look each phrase up in the research thesaurus (thesaurus.py) and expand acronyms;
+ 4. mark the first three topics as required and settings or populations as optional.
+
+Every term records where it came from, so the plan editor can say so.
 """
 import re
 
 from . import ai
 from .text import RESEARCH_FILLER, STOPWORDS, fold
 
-# Known synonyms. Keys are matched against the folded phrase.
-SYNONYMS = {
-    "ai": ("Artificial intelligence", ["artificial intelligence", "AI", "machine learning", "deep learning"]),
-    "artificial intelligence": ("Artificial intelligence", ["artificial intelligence", "AI", "machine learning", "deep learning"]),
-    "machine learning": ("Machine learning", ["machine learning", "deep learning", "neural network", "random forest", "gradient boosting"]),
-    "deep learning": ("Deep learning", ["deep learning", "neural network", "LSTM"]),
-    "generative ai": ("Generative AI", ["generative AI", "large language model", "ChatGPT", "LLM"]),
-    "chatbot": ("Chatbots", ["chatbot", "conversational agent", "virtual assistant"]),
-    "personalisation": ("Personalisation", ["personalization", "personalisation", "personalized recommendation", "recommender system"]),
-    "personalization": ("Personalisation", ["personalization", "personalisation", "personalized recommendation", "recommender system"]),
-    "recommendation": ("Recommendations", ["recommender system", "recommendation system", "personalized recommendation"]),
-    "customer experience": ("Customer experience", ["customer experience", "customer satisfaction", "user experience"]),
-    "customer satisfaction": ("Customer satisfaction", ["customer satisfaction", "customer experience"]),
-    "customer retention": ("Customer retention", ["customer retention", "customer loyalty", "churn", "repurchase intention"]),
-    "customer loyalty": ("Customer loyalty", ["customer loyalty", "customer retention", "repurchase intention"]),
-    "ecommerce": ("E-commerce", ["e-commerce", "ecommerce", "online retail", "online shopping"]),
-    "e-commerce": ("E-commerce", ["e-commerce", "ecommerce", "online retail", "online shopping"]),
-    "online shopping": ("E-commerce", ["e-commerce", "online retail", "online shopping"]),
-    "retail": ("Retail", ["retail", "retailing", "online retail"]),
-    "liquidity risk": ("Liquidity risk", ["liquidity risk", "funding liquidity", "liquidity stress", "liquidity coverage ratio", "bank run", "deposit outflow"]),
-    "credit risk": ("Credit risk", ["credit risk", "default prediction", "credit scoring", "loan default"]),
-    "bank": ("Banking", ["bank", "banking", "financial institution"]),
-    "banks": ("Banking", ["bank", "banking", "financial institution"]),
-    "banking": ("Banking", ["bank", "banking", "financial institution"]),
-    "privacy": ("Privacy", ["privacy", "data protection", "privacy concern"]),
-    "trust": ("Trust", ["trust", "consumer trust", "perceived risk"]),
-    "students": ("Students", ["students", "higher education", "university students"]),
-    "higher education": ("Higher education", ["higher education", "university", "students"]),
-    "healthcare": ("Healthcare", ["healthcare", "health care", "hospital", "clinical"]),
-    "climate change": ("Climate change", ["climate change", "global warming"]),
-    "social media": ("Social media", ["social media", "Instagram", "TikTok", "Facebook"]),
-    "mental health": ("Mental health", ["mental health", "depression", "anxiety", "well-being"]),
-    "energy": ("Energy", ["energy", "electricity", "power system"]),
-    "energy sector": ("Energy", ["energy sector", "power sector", "electricity sector", "energy industry", "energy"]),
-    "electricity": ("Electricity", ["electricity", "power system", "electric power"]),
-    "electricity generation": ("Electricity generation", ["electricity generation", "power generation", "electric power generation", "power plant"]),
-    "power generation": ("Electricity generation", ["power generation", "electricity generation", "electric power generation", "power plant"]),
-    "renewable energy": ("Renewable energy", ["renewable energy", "solar", "wind power", "photovoltaic", "clean energy"]),
-    "smart grid": ("Smart grid", ["smart grid", "power grid", "grid management", "demand response"]),
-    "load forecasting": ("Load forecasting", ["load forecasting", "demand forecasting", "electricity demand prediction"]),
-    "predictive maintenance": ("Predictive maintenance", ["predictive maintenance", "fault detection", "condition monitoring"]),
-    "supply chain": ("Supply chain", ["supply chain", "logistics", "supply network"]),
-    "remote work": ("Remote work", ["remote work", "telework", "work from home", "hybrid work"]),
-}
-
-# Phrases that describe a setting/population; they become optional groups when the
-# question already has two required topic groups.
-SETTING_WORDS = {"manufacturing", "agriculture",
-                 "transport", "transportation", "construction", "bank", "banks", "banking", "ecommerce", "e-commerce", "retail", "online shopping", "healthcare",
-                 "hospital", "hospitals", "higher education", "university", "universities", "school", "schools",
-                 "students", "smes", "sme", "firms", "companies", "organisations", "organizations", "india", "uk",
-                 "china", "europe", "united states", "usa", "developing countries"}
+# The vocabulary lives in thesaurus.py so it can grow without touching the parsing rules.
+from .thesaurus import (ACRONYMS, EVALUATIVE, HEAD_CONCEPTS, INSTRUMENT_HEADS, POPULATION_PREFIX,  # noqa: E402
+                        SETTING_WORDS, SOFT_HEADS, SYNONYMS, VERBS)
 
 RISK_WORDS = {"risk", "risks", "limitation", "limitations", "challenge", "challenges", "barrier", "barriers",
               "drawback", "drawbacks", "downside", "downsides", "concern", "concerns", "harm", "harms"}
@@ -92,99 +51,236 @@ def spelling_variants(term: str) -> list[str]:
     return out
 
 
+def _base_verb(word: str) -> str | None:
+    """The verb a word is a form of ("reduces", "reduced", "reducing" -> "reduce"), if it is one."""
+    if word in VERBS:
+        return word
+    for suffix, add in (("ies", "y"), ("ied", "y"), ("es", ""), ("ed", ""), ("ed", "e"), ("ing", ""), ("ing", "e"), ("s", ""), ("d", "")):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            stem_ = word[: -len(suffix)] + add
+            if stem_ in VERBS:
+                return stem_
+    return None
+
+
+def _capitals(question: str) -> dict[str, str]:
+    """Acronyms in the question ("US", "SMEs", "COVID-19"): kept as typed and never dropped as stopwords."""
+    return {fold(t): t for t in re.findall(r"[A-Za-z0-9][\w-]*", question or "") if sum(c.isupper() for c in t) >= 2}
+
+
+def _casing(question: str) -> dict[str, str]:
+    """How the student wrote names ("China", "sub-Saharan", "SMEs"), for display. The first word is skipped."""
+    words = re.findall(r"[A-Za-z0-9][\w'’-]*", question or "")
+    return {fold(t): t.replace("’", "'") for t in words[1:] if any(c.isupper() for c in t)}
+
+
+def _breaks(word: str, caps: dict | None = None) -> bool:
+    if caps and word in caps and word not in VERBS:
+        return False
+    if re.fullmatch(r"\d+(\.\d+)?", word):
+        return False
+    return (word in STOPWORDS or word in EVALUATIVE or len(word) < 2 or is_adverb(word)
+            or (word in RESEARCH_FILLER and word not in SOFT_HEADS) or _base_verb(word) is not None)
+
+
+def _protected_keys() -> list[str]:
+    keys = [k for k in SYNONYMS if " " in k]
+    return sorted(keys, key=len, reverse=True)
+
+
 def _phrases(question: str) -> tuple[list[str], bool]:
-    """Split the question into candidate topic phrases (1-3 words)."""
+    """Split the question into candidate topic phrases."""
+    caps = _capitals(question)
     text = fold(question)
-    # Protect known multi-word concepts ("liquidity risk", "customer experience") so the
-    # splitter below does not break them apart.
-    for key in sorted((k for k in SYNONYMS if " " in k), key=len, reverse=True):
-        text = re.sub(r"\b" + re.escape(key) + r"\b", key.replace(" ", "_"), text)
+    # A possessive names whose topic it is: "nurses' turnover intention" -> "nurses , turnover intention".
+    # Only plural possessives and people ("women's") are split, so "Alzheimer's disease" stays whole.
+    def _possessive(m):
+        word = m.group(1)
+        if m.group(2) == "s'" or word in POPULATION_HEADS or word in POPULATION_PREFIX:
+            return word + ("s" if m.group(2) == "s'" else "") + " ,"
+        return m.group(0)
+    text = re.sub(r"\b(\w+)('s|s')(?=\s)", _possessive, text)
+    # "intention to purchase" -> "purchase intention": the usual name of the concept in papers.
+    text = re.sub(r"\b(intentions?|willingness) to (\w+)", r"\2 \1 ,", text)
+    # Keep known multi-word concepts ("liquidity risk", "electric vehicle") together.
+    for key in _protected_keys():
+        text = re.sub(r"(?<![\w-])" + re.escape(key) + r"(?![\w-])", key.replace(" ", "_"), text)
     asks_risk = False
     phrases = []
     for chunk in CONNECTORS.split(text):
         if not chunk or not chunk.strip():
             continue
-        current = []
+        current: list[str] = []
+        has_key = False
+
+        def flush():
+            nonlocal has_key
+            if current:
+                phrases.append(" ".join(current))
+            current.clear()
+            has_key = False
+
         for w in chunk.split():
             w = w.strip("'\"")
             if "_" in w:
-                if current:
-                    phrases.append(" ".join(current))
-                current = []
-                phrases.append(w.replace("_", " "))
+                # A known concept keeps the words in front of it ("corporate investment_decisions") and a
+                # soft head after it ("supply_chain performance"), but two known concepts never merge.
+                if has_key or any(x in SYNONYMS or x in ACRONYMS or x in HEAD_CONCEPTS for x in current):
+                    flush()            # "blockchain supply_chain": blockchain is a concept, not a modifier
+                current.extend(w.replace("_", " ").split())
+                has_key = True
                 continue
             if w in AI_PREFIXES:
+                flush()
                 phrases.append("ai")
                 continue
             if w in RISK_WORDS:
                 asks_risk = True
-                if current:
-                    phrases.append(" ".join(current))
-                current = []
+                flush()
                 continue
-            if w in STOPWORDS or w in RESEARCH_FILLER or len(w) < 2 or is_adverb(w):
-                if current:
-                    phrases.append(" ".join(current))
-                current = []
+            if w in SOFT_HEADS:
+                if current:            # "patient outcomes", "esg performance": the head completes the phrase
+                    current.append(w)
+                    flush()
+                elif w in HEAD_CONCEPTS:
+                    phrases.append(w)  # "adoption" on its own is still a concept
                 continue
+            if _breaks(w, caps):
+                flush()
+                continue
+            if has_key:
+                flush()                # after a known concept only a soft head attaches; anything else starts anew
             current.append(w)
-        if current:
-            phrases.append(" ".join(current))
-    # Long runs of words are split into known sub-phrases where possible.
+        flush()
     out = []
     for p in phrases:
-        ws = p.split()
-        if len(ws) <= 3:
-            out.append(p)
-            continue
-        i = 0
-        while i < len(ws):
-            for n in (3, 2, 1):
-                cand = " ".join(ws[i : i + n])
-                if cand in SYNONYMS or n == 1:
-                    out.append(cand)
-                    i += n
-                    break
-    return out, asks_risk
+        out.extend(_split_compound(p.split()))
+    return [p for p in out if p], asks_risk
+
+
+def _split_compound(ws: list[str]) -> list[str]:
+    """Split a phrase that holds two ideas; keep one that is a single idea."""
+    joined = " ".join(ws)
+    if len(ws) <= 1 or joined in SYNONYMS or _singular(joined) in SYNONYMS:
+        return [joined]
+    # "electric vehicle adoption": a known concept followed by a head concept is two ideas.
+    if ws[-1] in HEAD_CONCEPTS:
+        return _split_compound(ws[:-1]) + [ws[-1]]
+    # "ai tutoring systems": a known concept in front of other content is a separate idea
+    # (not for a lone vague head: "esg performance" stays one phrase).
+    if ws[0] in SYNONYMS and " ".join(ws[1:]) not in SYNONYMS and not (len(ws) == 2 and ws[1] in SOFT_HEADS | GENERIC_NOUNS):
+        return [ws[0]] + _split_compound(ws[1:])
+    # "grading student essays": a leading -ing word is its own idea in a 3+ word phrase.
+    if len(ws) >= 3 and ws[0].endswith("ing") and ws[0] not in SOFT_HEADS:
+        return [ws[0]] + _split_compound(ws[1:])
+    # "employee innovation", "employee pro-environmental behaviour": the population is a setting and
+    # the rest is the topic. Kept together when the rest is only a vague head ("employee performance").
+    if ws[0] in POPULATION_PREFIX and not (len(ws) == 2 and ws[1] in SOFT_HEADS):
+        return [ws[0]] + _split_compound(ws[1:])
+    if len(ws) <= 3:
+        return [joined]
+    # Long runs: take known sub-phrases where possible, otherwise single words.
+    out, i = [], 0
+    while i < len(ws):
+        for n in (3, 2, 1):
+            cand = " ".join(ws[i : i + n])
+            if cand in SYNONYMS or n == 1:
+                out.append(cand)
+                i += n
+                break
+    return out
 
 
 GENERIC_NOUNS = {"businesses", "business", "companies", "company", "firms", "firm", "sector", "industry", "industries",
-                 "context", "settings", "platforms", "platform", "users", "consumers", "customers"}
+                 "context", "settings"}
+POPULATION_HEADS = {"consumers", "customers", "users", "students", "employees", "workers", "patients", "adults", "children",
+                    "women", "men", "mothers", "fathers", "parents", "farmers", "nurses", "teachers", "managers"}
 
 
-def _lookup(phrase: str) -> tuple[str, list[str], bool]:
-    """Map a phrase to (label, terms, is_setting) using the longest known sub-phrase."""
+def display(term: str, caps: dict | None = None) -> str:
+    """Write acronyms in capitals inside a term: "green hrm" -> "green HRM", "smes" -> "SMEs" as typed."""
+    caps = caps or {}
+    return " ".join(caps.get(w) or (ACRONYMS[w][0] if w in ACRONYMS else w) for w in term.split(" "))
+
+
+def with_acronyms(term: str) -> list[str]:
+    """A term plus its spelled-out form when it contains an acronym: "ESG performance" -> also
+    "environmental, social and governance performance"."""
+    words = term.lower().split(" ")
+    if not any(w in ACRONYMS for w in words):
+        return [term]
+    expanded = " ".join(ACRONYMS[w][1] if w in ACRONYMS else w for w in words)
+    return [display(term.lower()), expanded]
+
+
+def _singular(phrase: str) -> str:
+    return phrase[:-1] if phrase.endswith("s") and not phrase.endswith("ss") else phrase
+
+
+def _lookup(phrase: str, caps: dict | None = None) -> tuple[str, list[str], bool, str]:
+    """Map a phrase to (label, terms, is_setting, source). source is "thesaurus" or "question"."""
+    if phrase not in SYNONYMS and _singular(phrase) in SYNONYMS:
+        phrase = _singular(phrase)
     if phrase in SYNONYMS:
         label, terms = SYNONYMS[phrase]
-        return label, list(terms), phrase in SETTING_WORDS
+        return label, list(terms), phrase in SETTING_WORDS, "thesaurus"
+    if phrase in HEAD_CONCEPTS:
+        label, terms = HEAD_CONCEPTS[phrase]
+        return label, list(terms), False, "thesaurus"
+    if phrase in ACRONYMS and ACRONYMS[phrase][1] in SYNONYMS:
+        label, terms = SYNONYMS[ACRONYMS[phrase][1]]
+        return label, list(terms), False, "thesaurus"
     ws = phrase.split()
+    # A known concept inside a longer phrase ("ceo overconfidence" contains "overconfidence").
     for n in range(len(ws) - 1, 0, -1):
         for i in range(len(ws) - n + 1):
             key = " ".join(ws[i : i + n])
+            if key in SYNONYMS and key in SETTING_WORDS and set(ws) - set(key.split()) - GENERIC_NOUNS:
+                continue           # "mobile banking apps" is about mobile banking, not about banks as a setting
             if key in SYNONYMS:
                 label, terms = SYNONYMS[key]
-                extra = [phrase] if not set(ws) - {*key.split(), *GENERIC_NOUNS} else []
-                return label, list(terms) + [t for t in extra if t not in terms], key in SETTING_WORDS
-    core = [w for w in ws if w not in GENERIC_NOUNS] or ws
+                rest = set(ws) - set(key.split())
+                extra = [] if rest <= GENERIC_NOUNS else [display(phrase, caps)]
+                return label, [t for t in extra if t.lower() not in (x.lower() for x in terms)] + list(terms), key in SETTING_WORDS, "thesaurus"
+    # Drop a vague trailing noun ("software companies" -> "software"), but keep it as a modifier ("firm value").
+    core = ws[:-1] if len(ws) > 1 and ws[-1] in GENERIC_NOUNS else ws
     phrase = " ".join(core)
-    return phrase[:1].upper() + phrase[1:], [phrase], phrase in SETTING_WORDS
+    terms = [display(phrase, caps)]
+    # "corporate investment decisions" -> also "corporate investment"; "esg performance" -> also "ESG";
+    # "mindfulness training" -> also "mindfulness".
+    if len(core) >= 2 and (core[-1] in SOFT_HEADS or core[-1] in INSTRUMENT_HEADS):
+        modifier = core[:-1]
+        if len(modifier) >= 2 or modifier[0] in ACRONYMS or core[-1] in INSTRUMENT_HEADS:
+            terms.append(display(" ".join(modifier), caps))
+    elif len(core) == 3:
+        # "international trade flows" -> also "trade flows": papers often use the shorter core phrase.
+        terms.append(display(" ".join(core[1:]), caps))
+    label = display(phrase, caps)
+    is_setting = phrase in SETTING_WORDS or (len(core) >= 2 and core[-1] in POPULATION_HEADS) or phrase in POPULATION_HEADS
+    return label[:1].upper() + label[1:], terms, is_setting, "question"
+
+
+def _expand(terms: list[str]) -> list[str]:
+    out: list[str] = []
+    for t in terms:
+        for a in with_acronyms(t):
+            for v in spelling_variants(a):
+                if v.lower() not in (x.lower() for x in out):
+                    out.append(v)
+    return out
 
 
 def rule_based_groups(question: str) -> list[dict]:
     phrases, asks_risk = _phrases(question)
+    caps = {**_casing(question), **_capitals(question)}
     groups: list[dict] = []
     seen_labels = set()
     for p in phrases:
-        label, terms, is_setting = _lookup(p)
-        if label in seen_labels:
+        label, terms, is_setting, source = _lookup(p, caps)
+        if label.lower() in seen_labels:
             continue
-        seen_labels.add(label)
-        expanded = []
-        for t in terms:
-            for v in spelling_variants(t):
-                if v.lower() not in (x.lower() for x in expanded):
-                    expanded.append(v)
-        groups.append({"label": label, "terms": expanded, "required": True, "setting": is_setting})
+        seen_labels.add(label.lower())
+        groups.append({"label": label, "terms": _expand(terms), "required": True, "setting": is_setting, "source": source})
     topic = [g for g in groups if not g["setting"]]
     setting = [g for g in groups if g["setting"]]
     for i, g in enumerate(topic):
@@ -193,7 +289,7 @@ def rule_based_groups(question: str) -> list[dict]:
         g["required"] = len(topic) < 2
     ordered = topic + setting
     if asks_risk:
-        ordered.append(dict(RISK_GROUP))
+        ordered.append({**RISK_GROUP, "source": "thesaurus"})
     for g in ordered:
         g.pop("setting", None)
     return ordered[:6]
@@ -208,7 +304,7 @@ def template_plan(question: str) -> dict:
     groups = rule_based_groups(question)
     labels = [g["label"] for g in groups if g["required"]]
     return {
-        "generated_by": "Rule-based template (no AI)",
+        "generated_by": "Rule-based plan: question parsing + built-in research thesaurus (no AI)",
         "themes": [f"How {labels[0].lower()} relates to {labels[1].lower()}" if len(labels) > 1 else f"Evidence on {question}",
                    "Methods, samples and settings used", "Reported limitations, risks and mixed findings"],
         "subquestions": [
@@ -334,6 +430,50 @@ def ai_plan(question: str, scope: str = "", level: str = "") -> tuple[dict, dict
     plan = validate_ai_plan(data)
     plan["generated_by"] = f"AI proposal ({meta['model']}): edit before approving"
     return plan, meta
+
+
+MIN_SHARE = 3  # a keyword must appear on at least this many of the sampled papers
+
+
+def related_candidates(phrase: str, existing: list[str], counts: dict[str, int], sampled: int, k: int = 6) -> list[dict]:
+    """Alternative terms for `phrase`, from keywords that papers about it carry. Pure function (see tests).
+
+    Narrower variants that already contain the phrase ("telemedicine regulation") and fragments of it
+    ("carbon" for "carbon taxes") are left out, because searching the phrase already finds them.
+    """
+    if sampled < 10:
+        return []
+    p = fold(phrase).strip()
+    have = {fold(t) for t in existing}
+    out = []
+    for kw, n in sorted(counts.items(), key=lambda x: (-x[1], x[0])):
+        if n < MIN_SHARE or kw in have or p in kw or kw in p or _is_filler(kw) or len(kw) > 50:
+            continue
+        out.append({"term": kw, "papers": n, "of": sampled})
+        if len(out) == k:
+            break
+    return out
+
+
+def add_suggestions(groups: list[dict], counts_for, max_lookups: int = 4) -> int:
+    """For required concepts the thesaurus does not know, attach OpenAlex-based suggestions.
+
+    `counts_for(phrase)` returns (keyword counts, papers sampled). Suggestions are shown to the
+    student as optional extras; they are never added to the search on their own.
+    """
+    done = 0
+    for g in groups:
+        if done >= max_lookups:
+            break
+        if g.get("source") != "question" or not g.get("required"):
+            continue
+        try:
+            counts, sampled = counts_for(g["terms"][0])
+        except Exception:  # network, rate limit: the plan works without suggestions
+            return done
+        done += 1
+        g["suggestions"] = related_candidates(g["terms"][0], g["terms"], counts, sampled)
+    return done
 
 
 def clean_groups(groups: list[dict]) -> list[dict]:

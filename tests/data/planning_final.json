@@ -1,0 +1,12 @@
+[
+ {"q": "How does social media advertising influence impulse buying among young consumers?", "expect": [["social media advertising", "social media"], ["impulse buying"], ["young consumers", "consumers"]]},
+ {"q": "What is the effect of sleep deprivation on academic performance of university students?", "expect": [["sleep deprivation"], ["academic performance"], ["university students", "students"]]},
+ {"q": "Can wearable devices improve self-management of type 2 diabetes?", "expect": [["wearable devices", "wearable"], ["self-management"], ["type 2 diabetes", "diabetes"]]},
+ {"q": "How do tariffs affect international trade flows between the US and China?", "expect": [["tariffs", "tariff"], ["international trade", "trade flows"], ["china"]]},
+ {"q": "What factors influence nurses' turnover intention in public hospitals?", "expect": [["turnover intention"], ["nurses"], ["public hospitals", "hospitals"]]},
+ {"q": "Does flexible working improve work-life balance for working mothers?", "expect": [["flexible working", "flexible work"], ["work-life balance"], ["working mothers", "mothers"]]},
+ {"q": "How effective are AI tutoring systems for mathematics learning?", "expect": [["artificial intelligence", "ai"], ["tutoring", "tutoring systems", "intelligent tutoring"], ["mathematics", "mathematics learning"]]},
+ {"q": "What is the impact of urbanisation on biodiversity loss in Southeast Asia?", "expect": [["urbanisation", "urbanization"], ["biodiversity loss", "biodiversity"], ["southeast asia"]]},
+ {"q": "How does board gender diversity affect firm performance?", "expect": [["board gender diversity", "gender diversity", "board diversity"], ["firm performance"]]},
+ {"q": "Do mobile banking apps increase financial inclusion in sub-Saharan Africa?", "expect": [["mobile banking"], ["financial inclusion"], ["sub-saharan africa", "africa"]]}
+]

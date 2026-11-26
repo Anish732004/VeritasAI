@@ -273,6 +273,9 @@ def generate_plan(pid: str):
                 plan["generated_by"] += f" — AI unavailable: {e}"
         if plan is None:
             plan = concepts.template_plan(p["question"])
+        if not meta:
+            # Concepts the thesaurus does not know get alternative terms seen in real papers (OpenAlex).
+            concepts.add_suggestions(plan["concept_groups"], scholarly.openalex_keyword_counts)
         run["summary"] = f"{len(plan['concept_groups'])} concept groups"
     plan["for_question"] = p["question"]  # a plan answers one question; approving it after the question changed is blocked
     with db.db() as con:
@@ -300,6 +303,13 @@ def save_plan(pid: str, body: PlanIn):
     f = {**concepts.default_filters(), **{k: v for k, v in body.filters.items() if k in concepts.default_filters()}}
     with db.db() as con:
         p = load_project(con, pid)
+        # Keep where each concept came from and its suggestions when the student edits the plan.
+        before = {g.get("label", "").lower(): g for g in (p.get("plan") or {}).get("concept_groups") or []}
+        for g in groups:
+            old = before.get(g["label"].lower()) or {}
+            for key in ("source", "suggestions"):
+                if key in old:
+                    g[key] = old[key]
         plan = {**(p.get("plan") or {}), "themes": body.themes[:8], "subquestions": body.subquestions[:8],
                 "inclusion_criteria": body.inclusion_criteria[:8], "concept_groups": groups, "filters": f}
         plan.setdefault("generated_by", "Written by student")

@@ -1,4 +1,5 @@
-"""Every test runs with no OpenAI key and AI switched off, whatever is in the developer's .env.
+"""Every test runs with no OpenAI key and AI switched off, whatever is in the developer's .env,
+and with no network access to OpenAlex or Crossref (except the live suite, VERITAS_LIVE=1).
 
 Without this a real key in .env would make tests call OpenAI (slow, costs money, and results would
 depend on the machine). Tests that need AI use a stand-in instead.
@@ -12,3 +13,18 @@ def no_real_ai(monkeypatch):
     from backend import ai
     monkeypatch.setattr(ai, "OPENAI_API_KEY", "")
     monkeypatch.setattr(ai, "ENABLED", False)
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Offline tests must never call OpenAlex or Crossref: it is slow and spends the shared daily allowance.
+    A test that needs data replaces the scholarly function it uses with a stand-in."""
+    import os
+    if os.getenv("VERITAS_LIVE") == "1":
+        return
+    from backend import scholarly
+
+    def offline(url, *a, **k):
+        raise scholarly.ServiceError("OpenAlex/Crossref", "network disabled in offline tests")
+    monkeypatch.setattr(scholarly, "fetch_json", offline)
+

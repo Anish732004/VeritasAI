@@ -1,0 +1,19 @@
+[
+ {"q": "How is AI helping in energy sector, specifically in electricity generation using?", "expect": [["artificial intelligence", "ai"], ["energy"], ["electricity generation", "power generation"]]},
+ {"q": "Does AI-powered personalisation improve customer experience in ecommerce, and what risks or limitations have researchers identified?", "expect": [["artificial intelligence", "ai"], ["personalisation", "personalization"], ["customer experience"], ["e-commerce", "ecommerce"]]},
+ {"q": "How do banks manage liquidity risk using machine learning?", "expect": [["liquidity risk"], ["machine learning"], ["bank", "banking"]]},
+ {"q": "What is the impact of blockchain on supply chain transparency?", "expect": [["blockchain"], ["supply chain"], ["transparency"]]},
+ {"q": "How does remote work affect employee productivity and well-being?", "expect": [["remote work", "telework"], ["productivity"], ["well-being", "wellbeing"]]},
+ {"q": "Can social media use predict depression among adolescents?", "expect": [["social media"], ["depression"], ["adolescents", "adolescent", "teenagers"]]},
+ {"q": "What factors influence electric vehicle adoption in India?", "expect": [["electric vehicle", "electric vehicles"], ["adoption"], ["india"]]},
+ {"q": "How effective are large language models in grading student essays?", "expect": [["large language model", "large language models", "llm"], ["grading", "automated essay scoring", "assessment"], ["essays", "essay"]]},
+ {"q": "Does microfinance reduce poverty among women in developing countries?", "expect": [["microfinance"], ["poverty"], ["women"], ["developing countries"]]},
+ {"q": "How does ESG performance affect firm value?", "expect": [["esg", "environmental, social and governance"], ["firm value"]]},
+ {"q": "What role does gamification play in student engagement in online learning?", "expect": [["gamification"], ["student engagement"], ["online learning", "e-learning"]]},
+ {"q": "How can IoT improve predictive maintenance in manufacturing?", "expect": [["iot", "internet of things"], ["predictive maintenance"], ["manufacturing"]]},
+ {"q": "What are the effects of telemedicine on patient outcomes in rural areas?", "expect": [["telemedicine", "telehealth"], ["patient outcomes"], ["rural"]]},
+ {"q": "How does green HRM influence employee pro-environmental behaviour?", "expect": [["green hrm", "green human resource management"], ["pro-environmental behaviour", "pro-environmental behavior"]]},
+ {"q": "Is there a relationship between CEO overconfidence and corporate investment decisions?", "expect": [["ceo overconfidence", "overconfidence"], ["corporate investment", "investment decisions", "investment"]]},
+ {"q": "How do deepfakes affect trust in news media?", "expect": [["deepfakes", "deepfake"], ["trust"], ["news media", "news"]]},
+ {"q": "What is the effect of minimum wage increases on youth employment?", "expect": [["minimum wage"], ["youth employment"]]}
+]

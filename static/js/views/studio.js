@@ -16,12 +16,24 @@ function listEditor(name, label, items) {
   return `<div class="field"><label for="pl_${name}">${label} (one per line)</label><textarea id="pl_${name}" data-plan="${name}" style="min-height:80px">${esc((items || []).join('\n'))}</textarea></div>`;
 }
 
+// Where a concept's terms came from, and alternative terms seen in real papers (click to add).
+function groupNote(g) {
+  const sugg = (g.suggestions || []).filter(s => !g.terms.some(t => t.toLowerCase() === s.term.toLowerCase()));
+  const source = g.source === 'thesaurus' ? 'Terms from the built-in research thesaurus.'
+    : g.source === 'question' ? 'Taken from your wording; the thesaurus has no synonyms for it.' : '';
+  if (!source && !sugg.length) return '';
+  return `<div class="groupnote small muted">${source}
+    ${sugg.length ? `<div class="row" style="margin-top:6px"><span>Seen with it in papers (OpenAlex), click to add:</span>${sugg.map(s =>
+      `<button class="chip" data-action="plan-add-term" data-term="${esc(s.term)}" title="A keyword on ${s.papers} of the ${s.of} most-cited papers with this phrase in the title">＋ ${esc(s.term)} <span class="muted">${s.papers}/${s.of}</span></button>`).join('')}</div>` : ''}</div>`;
+}
+
 function groupRow(g, i) {
   return `<div class="group" data-group="${i}">
     <input aria-label="Concept label" data-g="label" value="${esc(g.label)}">
     <input aria-label="Search terms for ${esc(g.label)}, comma separated" data-g="terms" value="${esc(g.terms.join(', '))}">
     <label class="check"><input type="checkbox" data-g="required" ${g.required ? 'checked' : ''}> Required</label>
     <button class="ghost small" data-action="plan-remove-group" data-i="${i}" aria-label="Remove ${esc(g.label)}">✕</button>
+    ${groupNote(g)}
   </div>`;
 }
 
@@ -187,6 +199,15 @@ export const actions = {
     const box = $('groups');
     box.insertAdjacentHTML('beforeend', groupRow({ label: 'New concept', terms: [], required: false }, box.children.length));
     box.lastElementChild.querySelector('[data-g=terms]').focus();
+  },
+  'plan-add-term': el => {
+    const input = el.closest('.group').querySelector('[data-g=terms]');
+    const terms = input.value.split(',').map(t => t.trim()).filter(Boolean);
+    if (!terms.some(t => t.toLowerCase() === el.dataset.term.toLowerCase())) terms.push(el.dataset.term);
+    input.value = terms.join(', ');
+    el.remove();
+    $('querybox').textContent = queryPreview(collectPlan().concept_groups);
+    toast(`Added “${el.dataset.term}”. Save or approve the plan to keep it.`);
   },
   'plan-remove-group': el => { el.closest('.group').remove(); $('querybox').textContent = queryPreview(collectPlan().concept_groups); },
   'plan-save': async () => { await savePlan(); toast('Draft saved.'); renderApp(); },

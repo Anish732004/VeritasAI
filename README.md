@@ -38,6 +38,17 @@ Open http://127.0.0.1:8000. There is nothing to configure in the browser. On fir
 
 Optional journal list: put `data/journal_list.csv` with the columns `issn,name,list,tier` (tier is `A`, `B` or `C`, for example from ABDC or ABS) to use your own venue tiers instead of the citation-metric fallback.
 
+### How the plan is built without AI
+
+Without a key, Research Studio turns the question into concepts with transparent rules (`backend/concepts.py`) and a built-in research thesaurus (`backend/thesaurus.py`, about 110 concepts and 50 acronyms):
+
+- Question words, filler ("impact", "role"), evaluative words ("effective") and the verbs that join two ideas ("microfinance **reduce** poverty") end a concept.
+- Compounds stay together when the last word only makes sense with the one before ("patient outcomes", "firm value", "type 2 diabetes"), and are split when they hold two ideas ("electric vehicle | adoption", "grading | student essays", "nurses' | turnover intention").
+- Acronyms are expanded (IoT, ESG, HRM, LLM), names keep the capitals you typed (SMEs, sub-Saharan Africa), and places and populations become optional settings.
+- Each concept says whether its terms came from the thesaurus or from your wording. For concepts the thesaurus does not know, OpenAlex keywords seen on the most-cited papers with that phrase in the title are offered as **click-to-add suggestions** (one request per concept, cached for a day; never added on their own).
+
+Measured on research questions in `tests/data/` (the tests fail if a change makes this worse): on 10 questions written before the final rule changes and not used to tune them, the share of expected concepts found rose from 72% to 79% and junk concepts fell from 12 to 7; after fixing the general rules those questions exposed, all three sets (39 questions) find every expected concept. To grow the vocabulary, add entries to `backend/thesaurus.py`.
+
 ### Turn on AI (better question understanding)
 
 Without a key, Research Studio builds the concept map from word rules and a synonym list. With a key, a language model reads your question for meaning: it works out which concepts a paper must cover, adds the field's own terms, synonyms and acronyms, decides which concepts are essential (there is no limit on how many are required), explains in one sentence how it understood the question, and suggests a time window and whether conference papers matter. Its answer is cleaned (junk terms and duplicates removed), then **you edit and approve it** before anything is searched. After each search it also **rates how relevant every result is to your question** (from the title and abstract only) and blends the rating into the ranking, so papers that merely share a keyword sink and the best ones rise. Each result shows the rating, a one-sentence reason and, when the model quotes the paper, that quote only if it really appears there. Papers are never removed or accepted for you. If few papers match every required concept, the search relaxes the least essential ones step by step and tells you which.

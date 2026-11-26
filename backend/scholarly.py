@@ -214,6 +214,25 @@ def openalex_search(query: str, filters: list[str], per_page: int = 50, sort: st
     return [from_openalex(w) for w in data.get("results", [])], (data.get("meta") or {}).get("count", 0)
 
 
+def openalex_keyword_counts(phrase: str, n: int = 25) -> tuple[dict[str, int], int]:
+    """How often each OpenAlex keyword is attached to the n most-cited articles with `phrase` in the title.
+
+    One cheap request (cached for a day). Used to suggest alternative terms for a concept the
+    built-in thesaurus does not know.
+    """
+    phrase = phrase.replace('"', "").replace(",", " ").strip()
+    data = fetch_json(f"{OPENALEX}/works", {
+        "filter": f'title.search:"{phrase}",type:article', "per-page": n, "sort": "cited_by_count:desc",
+        "select": "keywords",
+    })
+    counts: dict[str, int] = {}
+    works = data.get("results", [])
+    for w in works:
+        for k in {(k.get("display_name") or "").strip().lower() for k in w.get("keywords") or []} - {""}:
+            counts[k] = counts.get(k, 0) + 1
+    return counts, len(works)
+
+
 def openalex_sources(source_ids: list[str]) -> dict[str, dict]:
     ids = [s for s in dict.fromkeys(source_ids) if s]
     out = {}

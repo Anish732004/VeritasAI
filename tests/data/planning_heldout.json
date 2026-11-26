@@ -1,0 +1,14 @@
+[
+ {"q": "How does mindfulness training affect stress among nurses?", "expect": [["mindfulness"], ["stress"], ["nurses", "nurse"]]},
+ {"q": "What is the impact of foreign direct investment on economic growth in Africa?", "expect": [["foreign direct investment", "fdi"], ["economic growth"], ["africa"]]},
+ {"q": "Do chatbots improve customer service quality in banking?", "expect": [["chatbot", "chatbots"], ["customer service", "service quality"], ["bank", "banking"]]},
+ {"q": "How does air pollution affect cognitive performance in children?", "expect": [["air pollution"], ["cognitive performance", "cognition", "cognitive function"], ["children", "child"]]},
+ {"q": "Can precision agriculture increase crop yields for smallholder farmers?", "expect": [["precision agriculture", "precision farming"], ["crop yield", "crop yields", "yield"], ["smallholder farmers", "smallholder", "farmers"]]},
+ {"q": "What are the barriers to cloud computing adoption among SMEs?", "expect": [["cloud computing"], ["adoption"], ["smes", "sme", "small and medium enterprises", "small and medium-sized enterprises"]]},
+ {"q": "How does cyberbullying relate to self-esteem in teenagers?", "expect": [["cyberbullying"], ["self-esteem"], ["teenagers", "adolescents", "adolescent"]]},
+ {"q": "Does corporate social responsibility influence brand loyalty?", "expect": [["corporate social responsibility", "csr"], ["brand loyalty"]]},
+ {"q": "How effective is cognitive behavioural therapy for insomnia?", "expect": [["cognitive behavioural therapy", "cognitive behavioral therapy", "cbt"], ["insomnia"]]},
+ {"q": "What drives consumer intention to purchase organic food?", "expect": [["purchase intention", "intention to purchase", "purchase"], ["organic food"]]},
+ {"q": "How do carbon taxes affect greenhouse gas emissions?", "expect": [["carbon tax", "carbon taxes", "carbon pricing"], ["greenhouse gas emissions", "emissions", "ghg emissions", "co2 emissions"]]},
+ {"q": "What is the role of transformational leadership in employee innovation?", "expect": [["transformational leadership"], ["innovation", "innovative behaviour", "innovative behavior", "employee innovation"]]}
+]
